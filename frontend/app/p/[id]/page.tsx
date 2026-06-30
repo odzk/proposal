@@ -49,7 +49,7 @@ export default function PublicProposalPage() {
   if (error || !proposal) return <ErrorScreen message={error || 'Proposal not found'} />
 
   const isExpired = proposal.status === 'expired' ||
-    (proposal.expiresAt && new Date(proposal.expiresAt) < new Date())
+    (proposal.expiryDate && new Date(proposal.expiryDate) < new Date())
 
   return (
     <div className="public-page">
@@ -58,9 +58,9 @@ export default function PublicProposalPage() {
         <NuvhoLogo variant="white" height={38} />
         <div className="public-header__meta">
           <span className="public-header__ref">Proposal #{proposal.id.slice(0,8).toUpperCase()}</span>
-          {proposal.expiresAt && (
+          {proposal.expiryDate && (
             <span className="public-header__expiry">
-              Valid until {new Date(proposal.expiresAt).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })}
+              Valid until {new Date(proposal.expiryDate).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })}
             </span>
           )}
         </div>
@@ -72,10 +72,10 @@ export default function PublicProposalPage() {
         <div className="public-cover__content">
           <div className="public-cover__prepared">Prepared for</div>
           <h1 className="public-cover__hotel">{proposal.hotelName}</h1>
-          <p className="public-cover__attn">Attention: {proposal.contactName}</p>
-          {proposal.validUntil && (
+          <p className="public-cover__attn">Attention: {proposal.clientName}</p>
+          {proposal.expiryDate && (
             <p className="public-cover__date">
-              Valid until {new Date(proposal.validUntil).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })}
+              Valid until {new Date(proposal.expiryDate).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })}
             </p>
           )}
         </div>
@@ -84,9 +84,9 @@ export default function PublicProposalPage() {
       {/* Body */}
       <div className="public-body">
         {/* Intro / Personal message */}
-        {proposal.senderMessage && (
+        {(proposal as any).senderMessage && (
           <section className="public-section">
-            <p className="public-intro">{proposal.senderMessage}</p>
+            <p className="public-intro">{(proposal as any).senderMessage}</p>
           </section>
         )}
 

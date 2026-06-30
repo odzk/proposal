@@ -78,35 +78,50 @@ export interface Staff {
   active: boolean
 }
 
-// Proposal generator wizard state
+// Simplified service line used inside the proposal wizard
+export interface DraftServiceLine {
+  code:        ServiceCode
+  monthlyFee:  number
+  setupFee:    number
+  term:        number
+}
+
+// Proposal generator wizard state (nested per-step structure)
 export interface ProposalDraft {
+  step: number
+
   // Step 1 — Hotel & Contact
-  hotelName: string
-  slug: string
-  clientName: string
-  clientEmail: string
-  clientPhone: string
-  clientTitle: string
-  hotelAddress: string
-  city: string
-  country: string
-  regionId: Region
+  hotel: {
+    name:            string
+    region:          Region
+    contactName:     string
+    contactEmail:    string
+    contactPhone:    string
+    contactTitle:    string
+    propertyAddress: string
+    hubspotDealId:   string
+  }
 
   // Step 2 — Service Lines
-  services: ServiceLine[]
+  services: DraftServiceLine[]
 
   // Step 3 — Sender
-  senderId: string
-  senderName: string
-  senderTitle: string
-  accountManagerId: string
+  sender: {
+    staffId: string
+    message: string
+  }
 
   // Step 4 — Cover
-  coverImageBase64?: string
-  coverImageType?: string
-  coverOverlayOpacity: number
+  cover: {
+    coverUrl: string
+  }
 
-  // Step 5 — Preview (read only)
+  // Step 5 — Preview
+  preview: {
+    recipientEmail: string
+  }
+
+  // Set after successful generation
   proposalId?: string
   proposalUrl?: string
 }
