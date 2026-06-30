@@ -18,11 +18,11 @@ const MOCK_STATS: DashboardStats = {
 }
 
 const MOCK_PROPOSALS: ProposalSummary[] = [
-  { id: 'p1', hotelName: 'The Langham Sydney',    contactName: 'Sarah Mitchell',  status: 'sent',    totalValue: 18500, createdAt: '2026-06-25', updatedAt: '2026-06-27', services: ['RM','SM'] },
-  { id: 'p2', hotelName: 'Park Hyatt Melbourne',  contactName: "James O'Brien",   status: 'signed',  totalValue: 32000, createdAt: '2026-06-20', updatedAt: '2026-06-24', services: ['RM','MK','CR'] },
-  { id: 'p3', hotelName: 'QT Gold Coast',         contactName: 'Emma Thornton',   status: 'draft',   totalValue: 14200, createdAt: '2026-06-28', updatedAt: '2026-06-28', services: ['SM'] },
-  { id: 'p4', hotelName: 'Ovolo Woolloomooloo',   contactName: 'Michael Chan',    status: 'pending', totalValue: 9800,  createdAt: '2026-06-22', updatedAt: '2026-06-26', services: ['CR'] },
-  { id: 'p5', hotelName: 'The Darling',           contactName: 'Priya Sharma',    status: 'expired', totalValue: 21000, createdAt: '2026-05-28', updatedAt: '2026-06-15', services: ['RM','MK'] },
+  { id: 'p1', hotelName: 'The Langham Sydney',   clientName: 'Sarah Mitchell',  clientEmail: 'sarah@langham.com',    status: 'sent',    regionId: 'au', totalMonthlyValue: 18500, servicesCount: 2, createdAt: '2026-06-25', expiryDate: '2026-07-25', viewCount: 3 },
+  { id: 'p2', hotelName: 'Park Hyatt Melbourne', clientName: "James O'Brien",   clientEmail: 'james@parkhyatt.com',  status: 'signed',  regionId: 'au', totalMonthlyValue: 32000, servicesCount: 3, createdAt: '2026-06-20', expiryDate: '2026-07-20', viewCount: 7 },
+  { id: 'p3', hotelName: 'QT Gold Coast',        clientName: 'Emma Thornton',   clientEmail: 'emma@qthotels.com',    status: 'draft',   regionId: 'au', totalMonthlyValue: 14200, servicesCount: 1, createdAt: '2026-06-28', expiryDate: '2026-07-28', viewCount: 0 },
+  { id: 'p4', hotelName: 'Ovolo Woolloomooloo',  clientName: 'Michael Chan',    clientEmail: 'michael@ovolo.com',    status: 'sent',    regionId: 'au', totalMonthlyValue: 9800,  servicesCount: 1, createdAt: '2026-06-22', expiryDate: '2026-07-22', viewCount: 2 },
+  { id: 'p5', hotelName: 'The Darling',          clientName: 'Priya Sharma',    clientEmail: 'priya@thedarling.com', status: 'expired', regionId: 'au', totalMonthlyValue: 21000, servicesCount: 2, createdAt: '2026-05-28', expiryDate: '2026-06-28', viewCount: 5 },
 ]
 
 export default function DashboardPage() {
@@ -124,16 +124,14 @@ export default function DashboardPage() {
                   <td className="proposals-table__hotel">
                     <span>{p.hotelName}</span>
                   </td>
-                  <td className="proposals-table__contact">{p.contactName}</td>
+                  <td className="proposals-table__contact">{p.clientName}</td>
                   <td>
                     <div className="service-tags">
-                      {p.services.map(s => (
-                        <span key={s} className="service-tag">{s}</span>
-                      ))}
+                      <span className="service-tag">{p.servicesCount} service{p.servicesCount !== 1 ? 's' : ''}</span>
                     </div>
                   </td>
                   <td className="proposals-table__value">
-                    ${p.totalValue.toLocaleString('en-AU')}
+                    ${p.totalMonthlyValue.toLocaleString('en-AU')}
                   </td>
                   <td>
                     <span className={`nv-badge nv-badge--${p.status}`}>
@@ -141,7 +139,7 @@ export default function DashboardPage() {
                     </span>
                   </td>
                   <td className="proposals-table__date">
-                    {formatDate(p.updatedAt)}
+                    {formatDate(p.createdAt)}
                   </td>
                   <td>
                     <Link href={`/proposals/${p.id}`} className="nv-btn nv-btn--ghost nv-btn--sm">
