@@ -6,7 +6,7 @@
 // serve both places instead of duplicating the document layout twice.
 
 import type { ProposalDraft, ScopeItem, FeeRow, PricingFootnote, TermsClause } from './types'
-import { SERVICE_CATALOG, deriveFeeSummary } from './serviceCatalog'
+import { getServiceLabel, deriveFeeSummary, currencySymbol } from './serviceCatalog'
 
 export const ROLE_LABELS: Record<string, string> = {
   exec: 'Executive', bd: 'Business Development', account_manager: 'Account Manager',
@@ -26,6 +26,11 @@ export interface ProposalDocModel {
   hotelName:         string
   contactName:       string
   propertyAddress:   string
+  nuvhoAddress:      string   // Nuvho entity address for the proposal's region (Settings → Region Settings)
+  companyName:       string   // legal entity name shown as the section heading — e.g. "Nuvho Pty Ltd" (AU); differs per region
+  aboutNuvho:        string   // about-us paragraph under that heading — wording differs per region too
+  footerText:        string   // legal footer / company-registration small print for that region
+  currencySymbol:    string   // derived from the region's currency, used instead of a hardcoded '$'
   dateIssued:        string   // pre-formatted display date, e.g. "23 July 2026"
   coverUrl:          string
   introMessage:      string
@@ -62,7 +67,7 @@ interface StaffLike { id: string; name: string; email: string; role_type: string
 export function buildDocModelFromDraft(draft: ProposalDraft, staff: StaffLike[]): ProposalDocModel {
   const sender = staff.find(s => s.id === draft.sender.staffId)
   const services: DocServiceGroup[] = draft.services.map(s => ({
-    code: s.code, label: SERVICE_CATALOG[s.code].label,
+    code: s.code, label: getServiceLabel(s.code),
     scopeItems: s.scopeItems, feeRows: s.feeRows, footnotes: s.footnotes,
   }))
   const title = proposalTitle(services.map(s => s.label))
@@ -72,6 +77,11 @@ export function buildDocModelFromDraft(draft: ProposalDraft, staff: StaffLike[])
     hotelName:         draft.hotel.name,
     contactName:       draft.hotel.contactName,
     propertyAddress:   draft.hotel.propertyAddress,
+    nuvhoAddress:      draft.regionSettings.address,
+    companyName:       draft.regionSettings.companyName,
+    aboutNuvho:        draft.regionSettings.aboutNuvho,
+    footerText:        draft.regionSettings.footerText,
+    currencySymbol:    currencySymbol(draft.regionSettings.currency),
     dateIssued:        formatToday(),
     coverUrl:          draft.cover.coverUrl,
     introMessage:      draft.sender.message || `I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${draft.hotel.name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.`,
@@ -96,7 +106,7 @@ export function buildDocModelFromProposal(p: any): ProposalDocModel {
   const rawServices: any[] = p.services || []
   const services: DocServiceGroup[] = rawServices.map(s => ({
     code:       s.code,
-    label:      SERVICE_CATALOG[s.code as keyof typeof SERVICE_CATALOG]?.label || s.code,
+    label:      getServiceLabel(s.code),
     scopeItems: s.scope_items || [],
     feeRows:    s.fee_rows || [],
     footnotes:  s.footnotes || [],
@@ -110,6 +120,11 @@ export function buildDocModelFromProposal(p: any): ProposalDocModel {
     hotelName:         p.hotel_name || '',
     contactName:       p.contact_name || '',
     propertyAddress:   p.property_address || '',
+    nuvhoAddress:      p.nuvho_address || '',
+    companyName:       p.company_name || '',
+    aboutNuvho:        p.about_nuvho || '',
+    footerText:        p.footer_text || '',
+    currencySymbol:    currencySymbol(p.currency || 'AUD'),
     dateIssued:        p.created_at ? new Date(p.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : formatToday(),
     coverUrl:          p.cover_url || '',
     introMessage:      p.sender_message || `I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${p.hotel_name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.`,

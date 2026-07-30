@@ -48,13 +48,32 @@ export const FEE_TYPES: { value: FeeType; label: string }[] = [
   { value: 'custom',     label: 'Custom' },
 ]
 
+// Fallback defaults — used until Settings → Region Settings has been fetched
+// (or if that fetch fails), and as the seed values for the region_settings
+// D1 table's govLaw-derived Governing Law clause. The editable source of
+// truth for currency/address/footer/T&Cs once configured lives in
+// region_settings (see RegionSettings in ./types).
 export const REGION_META: Record<Region, { currency: string; govLaw: string }> = {
   au: { currency: 'AUD', govLaw: 'Queensland, Australia' },
   uk: { currency: 'GBP', govLaw: 'England & Wales' },
   ie: { currency: 'EUR', govLaw: 'Ireland' },
 }
 
-export const SERVICE_CATALOG: Record<ServiceCode, ServiceCatalogEntry> = {
+// ISO 4217 currency code → display symbol, used to format fee amounts
+// throughout the proposal document instead of a hardcoded '$'.
+export const CURRENCY_SYMBOLS: Record<string, string> = {
+  AUD: '$', GBP: '£', EUR: '€', USD: '$', NZD: '$',
+}
+
+export function currencySymbol(code: string): string {
+  return CURRENCY_SYMBOLS[code] || '$'
+}
+
+// Partial, not a full Record<ServiceCode,...> — ServiceCode is now any string
+// (Settings → Service Lines categories are staff-editable), so most codes
+// won't have a hardcoded entry here. Use getServiceEntry()/getServiceLabel()/
+// getServiceColor() below instead of indexing this directly.
+export const SERVICE_CATALOG: Partial<Record<string, ServiceCatalogEntry>> = {
   RM: {
     code: 'RM', label: 'Revenue Management', color: 'var(--nv-blue-slate, #28687f)',
     sections: [
@@ -165,8 +184,49 @@ function generateId(prefix: string): string {
   return `${prefix}_${Date.now()}_${uidCounter}_${Math.random().toString(36).slice(2, 7)}`
 }
 
-export function initScopeItems(code: ServiceCode): ScopeItem[] {
+// Fallback colors cycled (by a stable hash of the code) for any service code
+// that has no hardcoded SERVICE_CATALOG entry — e.g. Systems/Advisory, or any
+// custom category added from Settings → Service Lines. Same hash every render
+// so a given code always gets the same color.
+const FALLBACK_SERVICE_COLORS = [
+  '#c98a3e', '#5c6bc0', '#4d8f6b', '#a2557c', '#3f8fa8', '#8a7548',
+]
+
+function hashCode(code: string): number {
+  let h = 0
+  for (let i = 0; i < code.length; i++) h = (h * 31 + code.charCodeAt(i)) >>> 0
+  return h
+}
+
+// Safe accessor for SERVICE_CATALOG — returns the hardcoded entry when one
+// exists (RM/SM/CR/MK today), otherwise synthesizes an empty-content entry
+// (no pre-built scope/pricing template) so callers never index undefined.
+// `label` lets callers pass the live Settings → Service Lines label so the
+// synthesized entry's label matches what's shown elsewhere, instead of the
+// bare code.
+export function getServiceEntry(code: string, label?: string): ServiceCatalogEntry {
   const entry = SERVICE_CATALOG[code]
+  if (entry) return entry
+  return {
+    code:               code as ServiceCode,
+    label:              label || code,
+    color:              FALLBACK_SERVICE_COLORS[hashCode(code) % FALLBACK_SERVICE_COLORS.length],
+    sections:           [],
+    defaultPricingRows: [],
+    pricingFootnotes:   [],
+  }
+}
+
+export function getServiceLabel(code: string, label?: string): string {
+  return getServiceEntry(code, label).label
+}
+
+export function getServiceColor(code: string): string {
+  return getServiceEntry(code).color
+}
+
+export function initScopeItems(code: ServiceCode): ScopeItem[] {
+  const entry = getServiceEntry(code)
   return entry.sections.flatMap(section =>
     section.items.map(item => ({
       id:             item.id,
@@ -178,7 +238,7 @@ export function initScopeItems(code: ServiceCode): ScopeItem[] {
 }
 
 export function initFeeRows(code: ServiceCode): FeeRow[] {
-  const entry = SERVICE_CATALOG[code]
+  const entry = getServiceEntry(code)
   return entry.defaultPricingRows.map(row => ({
     id:        generateId('fee'),
     component: row.component,
@@ -190,7 +250,7 @@ export function initFeeRows(code: ServiceCode): FeeRow[] {
 }
 
 export function initFootnotes(code: ServiceCode): PricingFootnote[] {
-  const entry = SERVICE_CATALOG[code]
+  const entry = getServiceEntry(code)
   return entry.pricingFootnotes.map(text => ({ id: generateId('fn'), text }))
 }
 

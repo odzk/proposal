@@ -1,14 +1,7 @@
 // ─── Proposal System Types ───────────────────────────────────────────────────
 
 export type ProposalStatus = 'draft' | 'generated' | 'sent' | 'signed' | 'expired' | 'fully_signed'
-// Was a fixed 4-value union ('RM'|'SM'|'MK'|'CR'). Widened to `string` because
-// service-line categories are now managed from Settings → Service Lines
-// (fully staff-editable — add/rename/delete), so the set of valid codes is no
-// longer known at compile time. String-literal codes like 'RM' still satisfy
-// this type unchanged; see ServiceCategory below and lib/serviceCatalog.ts's
-// getServiceEntry/getServiceLabel/getServiceColor for the safe-lookup pattern
-// now required anywhere a code might not have a hardcoded catalog entry.
-export type ServiceCode     = string
+export type ServiceCode     = 'RM' | 'SM' | 'MK' | 'CR'
 export type Region          = 'au' | 'uk' | 'ie'
 
 export interface ServiceLine {
@@ -149,19 +142,6 @@ export interface RegionSettings {
   footerText:  string
   currency:    string   // ISO 4217 code, e.g. 'AUD' | 'GBP' | 'EUR'
   clauses:     TermsClause[]
-}
-
-// A main service-line category managed from Settings → Service Lines — the
-// list Step 2 (Services) of the proposal wizard offers to select from. Fully
-// staff-editable (add/rename/reorder/deactivate/delete); `code` is stable
-// once created (stored on proposal_services.code) even though the category
-// itself can later be deleted or renamed.
-export interface ServiceCategory {
-  code:        string
-  label:       string
-  description: string
-  sortOrder:   number
-  active:      boolean
 }
 
 export type SignatureMethod = 'type' | 'draw'

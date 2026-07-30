@@ -16,8 +16,31 @@ import type { ProposalDocModel } from '@/lib/documentModel'
    document layout — and its PDF/Word export — only exists in one place.
    The root element's id is the target for the print stylesheet used by the
    "Download PDF" button (see globals.css `@media print`). */
+
+/* Table of contents entries — each links (smooth-scrolls) to the matching
+   section id below. Keep in sync with the section wrappers further down.
+   The "Nuvho Pty Ltd" entry's label follows the region's Company Name
+   (Settings → Region Settings) so it matches whatever the section heading
+   itself renders (see below) instead of staying hardcoded to the AU entity. */
+function buildTocItems(companyName: string): { label: string; id: string }[] {
+  return [
+    { label: 'Background',                     id: 'doc-section-background' },
+    { label: 'Scope of Works',                  id: 'doc-section-scope'      },
+    { label: companyName || 'Nuvho Pty Ltd',    id: 'doc-section-nuvho'      },
+    { label: 'Fee Structure',                   id: 'doc-section-fees'       },
+    { label: 'Quote Approval',                  id: 'doc-section-approval'   },
+    { label: 'Appendix 1 – Terms & Conditions', id: 'doc-section-appendix'   },
+  ]
+}
+
 export function ProposalDocument({ model }: { model: ProposalDocModel }) {
   const multiSvc = model.services.length > 1
+  const tocItems = buildTocItems(model.companyName)
+
+  function jumpTo(e: React.MouseEvent, id: string) {
+    e.preventDefault()
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }
 
   return (
     <div className="doc-preview" id="proposal-print-root">
@@ -34,7 +57,14 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
 
       {/* Letter */}
       <div className="doc-page">
-        <div className="doc-date">Date of Issue: {model.dateIssued}</div>
+        <div className="doc-letterhead">
+          <div className="doc-date">Date of Issue: {model.dateIssued}</div>
+          {model.nuvhoAddress && (
+            <div className="doc-nuvho-address">
+              {model.nuvhoAddress.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
+            </div>
+          )}
+        </div>
         <div className="doc-address">
           {model.contactName || '[Client Name]'}<br />
           {model.hotelName || '[Hotel Name]'}<br />
@@ -45,12 +75,12 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         <p>{model.introMessage}</p>
 
         <div className="doc-toc">
-          <div className="doc-toc__item">Background</div>
-          <div className="doc-toc__item">Scope of Works</div>
-          <div className="doc-toc__item">Nuvho Pty Ltd</div>
-          <div className="doc-toc__item">Fee Structure</div>
-          <div className="doc-toc__item">Quote Approval</div>
-          <div className="doc-toc__item">Appendix 1 – Terms &amp; Conditions</div>
+          {tocItems.map(item => (
+            <a key={item.id} href={`#${item.id}`} className="doc-toc__item"
+              onClick={e => jumpTo(e, item.id)}>
+              {item.label}
+            </a>
+          ))}
         </div>
 
         <p>If you require further information or wish to discuss this proposal, please don&apos;t hesitate to contact me.</p>
@@ -63,7 +93,7 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
       </div>
 
       {/* Background */}
-      <div className="doc-page">
+      <div className="doc-page" id="doc-section-background">
         <h3 className="doc-heading">Background</h3>
         <p>
           {model.hotelName || 'The property'} has engaged Nuvho to deliver {model.title.toLowerCase()}, with a
@@ -73,7 +103,7 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
       </div>
 
       {/* Scope of Works */}
-      <div className="doc-page">
+      <div className="doc-page" id="doc-section-scope">
         <h3 className="doc-heading">Scope of Works</h3>
         <p>
           We develop a long-term and collaborative partnership with our clients, delivering services and value
@@ -100,18 +130,20 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         })}
       </div>
 
-      {/* Nuvho Pty Ltd */}
-      <div className="doc-page">
-        <h3 className="doc-heading">Nuvho Pty Ltd</h3>
+      {/* Nuvho Pty Ltd (Company Name + About — Settings → Region Settings) */}
+      <div className="doc-page" id="doc-section-nuvho">
+        <h3 className="doc-heading">{model.companyName || 'Nuvho Pty Ltd'}</h3>
         <p>
-          Nuvho is a new breed of hotel services company, providing tailored solutions to clients from a services,
-          systems and operational perspective. We partner with independent and boutique hotels to deliver the
-          commercial capability of a larger group, without the overhead.
+          {model.aboutNuvho || (
+            'Nuvho is a new breed of hotel services company, providing tailored solutions to clients from a ' +
+            'services, systems and operational perspective. We partner with independent and boutique hotels to ' +
+            'deliver the commercial capability of a larger group, without the overhead.'
+          )}
         </p>
       </div>
 
       {/* Fee Structure */}
-      <div className="doc-page">
+      <div className="doc-page" id="doc-section-fees">
         <h3 className="doc-heading">Fee Structure</h3>
         <p>
           The following table outlines the associated fee structure of our services. Our fees exclude GST, which
@@ -135,7 +167,7 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
                       <tr key={row.id}>
                         <td>{row.component || '—'}</td>
                         <td>{FEE_TYPES.find(f => f.value === row.feeType)?.label || row.feeType}</td>
-                        <td>{row.fee === '' ? '—' : `$${Number(row.fee).toLocaleString()}`}</td>
+                        <td>{row.fee === '' ? '—' : `${model.currencySymbol}${Number(row.fee).toLocaleString()}`}</td>
                         <td>{row.term === '' ? '—' : row.term}</td>
                         <td>{row.note || ''}</td>
                       </tr>
@@ -145,7 +177,7 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
               </tbody>
             </table>
             {model.grandTotalMonthly > 0 && (
-              <div className="doc-fee-total">Combined monthly total: ${model.grandTotalMonthly.toLocaleString()}</div>
+              <div className="doc-fee-total">Combined monthly total: {model.currencySymbol}{model.grandTotalMonthly.toLocaleString()}</div>
             )}
             {model.footnotes.length > 0 && (
               <ul className="doc-footnotes">
@@ -157,7 +189,7 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
       </div>
 
       {/* Quote Approval */}
-      <div className="doc-page">
+      <div className="doc-page" id="doc-section-approval">
         <h3 className="doc-heading">Quote Approval</h3>
         <p>
           Should the terms of this proposal be acceptable, please sign below and return the applicable service
@@ -182,10 +214,16 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
             </div>
           </div>
         )}
+
+        {model.footerText && (
+          <div className="doc-legal-footer">
+            {model.footerText.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
+          </div>
+        )}
       </div>
 
       {/* Appendix — Terms & Conditions */}
-      <div className="doc-page">
+      <div className="doc-page" id="doc-section-appendix">
         <h3 className="doc-heading">Appendix 1 – Terms &amp; Conditions</h3>
         {model.clauses.length === 0 && <p className="doc-empty">No clauses selected.</p>}
         {model.clauses.map(c => (
@@ -207,6 +245,10 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         .doc-cover {
           height: 460px; background-size: cover; background-position: center;
           background-color: var(--nv-blue-slate); display: flex; align-items: flex-end; padding: 0;
+          /* Clip the scrim overlay (below) to this box's own border-radius —
+             otherwise its square corners sit flush on top of the rounded
+             bottom edge, so only the top corners look rounded. */
+          overflow: hidden;
         }
         .doc-cover__scrim {
           width: 100%; background: linear-gradient(to top, rgba(20,40,50,0.78), rgba(20,40,50,0));
@@ -216,11 +258,21 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         .doc-cover__hotel { color: rgba(255,255,255,0.92); font-size: 14px; }
         .doc-cover__date  { color: rgba(255,255,255,0.7); font-size: 12px; }
 
-        .doc-date    { font-size: 12px; color: var(--nv-text-muted); margin-bottom: 16px; }
+        .doc-letterhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 16px; }
+        .doc-date    { font-size: 12px; color: var(--nv-text-muted); }
+        .doc-nuvho-address { font-size: 11.5px; color: var(--nv-text-muted); text-align: right; line-height: 1.5; }
         .doc-address { margin-bottom: 16px; }
+        .doc-legal-footer {
+          margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--nv-border-hair);
+          font-size: 10.5px; line-height: 1.6; color: var(--nv-text-muted);
+        }
         .doc-re      { font-weight: 700; margin-bottom: 16px; }
         .doc-toc     { margin: 18px 0; padding-left: 4px; }
-        .doc-toc__item { padding: 4px 0; font-weight: 600; color: var(--nv-text-heading); }
+        .doc-toc__item {
+          display: block; padding: 4px 0; font-weight: 600; color: var(--nv-text-heading);
+          text-decoration: none; cursor: pointer; transition: color var(--nv-dur);
+        }
+        .doc-toc__item:hover, .doc-toc__item:focus-visible { color: var(--nv-blue-slate); text-decoration: underline; }
         .doc-sender  { margin-top: 4px; }
 
         .doc-heading {

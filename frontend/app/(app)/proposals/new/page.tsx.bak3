@@ -4,10 +4,10 @@ import React, { useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type {
   ProposalDraft, ServiceCode, Region, DraftServiceLine, ScopeItem, FeeRow,
-  PricingFootnote, TermsClause, FeeType, RegionSettings, ServiceCategory,
+  PricingFootnote, TermsClause, FeeType, RegionSettings,
 } from '@/lib/types'
 import {
-  getServiceLabel, getServiceColor, FEE_TYPES, REGION_META, initScopeItems, initFeeRows,
+  SERVICE_CATALOG, FEE_TYPES, REGION_META, initScopeItems, initFeeRows,
   initFootnotes, initTerms, defaultTermsClauses, generateRowId, deriveFeeSummary,
 } from '@/lib/serviceCatalog'
 import { buildDocModelFromDraft, downloadBlob } from '@/lib/documentModel'
@@ -75,33 +75,6 @@ export default function NewProposalPage() {
         for (const r of (data.data as RegionSettings[])) map[r.region] = r
         setRegionSettingsMap(map)
       } catch { /* fall back to serviceCatalog defaults silently */ }
-    })()
-    return () => { cancelled = true }
-  }, [])
-
-  // Service Categories (Settings → Service Lines) — the main service-line
-  // options Step 2 offers. Fetched once here (not inside Step2Services)
-  // so it survives that step's component unmounting when the wizard
-  // advances, same reasoning as regionSettingsMap above. Only active
-  // categories are shown to select from; a category deleted or deactivated
-  // after a proposal already used its code doesn't affect that proposal —
-  // getServiceLabel/getServiceColor fall back gracefully for unknown codes.
-  const [serviceCategories, setServiceCategories] = useState<ServiceCategory[]>([])
-  const [serviceCategoriesLoading, setServiceCategoriesLoading] = useState(true)
-
-  React.useEffect(() => {
-    let cancelled = false
-    ;(async () => {
-      try {
-        const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/settings/service-categories`, { credentials: 'include' })
-        const data = await res.json()
-        if (!res.ok || cancelled) return
-        const active = (data.data as ServiceCategory[])
-          .filter(c => c.active)
-          .sort((a, b) => a.sortOrder - b.sortOrder)
-        setServiceCategories(active)
-      } catch { /* Step2Services shows an error state if this never resolves */ }
-      finally { if (!cancelled) setServiceCategoriesLoading(false) }
     })()
     return () => { cancelled = true }
   }, [])
@@ -363,14 +336,13 @@ export default function NewProposalPage() {
               applyRegionSettings={applyRegionSettings} />
           )}
           {step === 2 && (
-            <Step2Services draft={draft} setDraft={setDraft} errors={errors}
-              serviceCategories={serviceCategories} serviceCategoriesLoading={serviceCategoriesLoading} />
+            <Step2Services draft={draft} setDraft={setDraft} errors={errors} />
           )}
           {step === 3 && (
-            <Step3Scope draft={draft} setDraft={setDraft} errors={errors} serviceCategories={serviceCategories} />
+            <Step3Scope draft={draft} setDraft={setDraft} errors={errors} />
           )}
           {step === 4 && (
-            <Step4Pricing draft={draft} setDraft={setDraft} errors={errors} serviceCategories={serviceCategories} />
+            <Step4Pricing draft={draft} setDraft={setDraft} errors={errors} />
           )}
           {step === 5 && (
             <Step5Sender
@@ -1427,14 +1399,15 @@ function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSetting
   )
 }
 
-/* ─── Step 2: Services ───
-   Options come from Settings → Service Lines (serviceCategories prop),
-   not a hardcoded list, so admins can add/rename/reorder/retire service
-   lines without a code change. See lib/serviceCatalog.ts's getServiceEntry
-   for how codes without a hardcoded scope/pricing template (e.g. Systems,
-   Advisory, or any custom category) start empty and are filled in manually
-   on Steps 3–4. */
-function Step2Services({ draft, setDraft, errors, serviceCategories = [], serviceCategoriesLoading }: StepProps) {
+/* ─── Step 2: Services ─── */
+const SERVICE_DEFS = [
+  { code: 'RM' as ServiceCode, name: 'Revenue Management',  desc: 'Full RM strategy, pricing, OTA management' },
+  { code: 'SM' as ServiceCode, name: 'Sales Management',    desc: 'Corporate sales, MICE, pro-active outreach' },
+  { code: 'CR' as ServiceCode, name: 'Concierge Revenue',   desc: 'Upselling, packages, ancillary revenue' },
+  { code: 'MK' as ServiceCode, name: 'Marketing',           desc: 'Digital marketing, content, campaigns' },
+]
+
+function Step2Services({ draft, setDraft, errors }: StepProps) {
   function toggle(code: ServiceCode) {
     setDraft(d => {
       if (d.services.some(s => s.code === code)) {
@@ -1464,15 +1437,8 @@ function Step2Services({ draft, setDraft, errors, serviceCategories = [], servic
 
       {errors.services && <div style={{color:'var(--nv-error)',fontSize:13,marginBottom:12}}>{errors.services}</div>}
 
-      {serviceCategoriesLoading && <p className="step-note">Loading service lines…</p>}
-      {!serviceCategoriesLoading && serviceCategories.length === 0 && (
-        <p className="step-note">
-          No service lines are configured yet — add some under Settings → Service Lines.
-        </p>
-      )}
-
       <div className="services-grid">
-        {serviceCategories.map(svc => {
+        {SERVICE_DEFS.map(svc => {
           const selected = draft.services.find(s => s.code === svc.code)
           return (
             <div key={svc.code}
@@ -1486,8 +1452,8 @@ function Step2Services({ draft, setDraft, errors, serviceCategories = [], servic
                   onClick={e => e.stopPropagation()}
                   onChange={() => toggle(svc.code)} />
               </div>
-              <div className="service-card__name">{svc.label}</div>
-              <div className="service-card__desc">{svc.description}</div>
+              <div className="service-card__name">{svc.name}</div>
+              <div className="service-card__desc">{svc.desc}</div>
             </div>
           )
         })}
@@ -1566,9 +1532,8 @@ function Step2Services({ draft, setDraft, errors, serviceCategories = [], servic
    header (only shown when more than one service is selected, since there's
    nothing to distinguish with just one) and ending in its own
    "+ Add Custom Item" control scoped to that service. */
-function Step3Scope({ draft, setDraft, serviceCategories = [] }: StepProps) {
+function Step3Scope({ draft, setDraft }: StepProps) {
   const services = draft.services
-  const categoryLabel = (code: ServiceCode) => serviceCategories.find(c => c.code === code)?.label
 
   function updateScopeItems(code: ServiceCode, scopeItems: ScopeItem[]) {
     setDraft(d => ({
@@ -1597,8 +1562,8 @@ function Step3Scope({ draft, setDraft, serviceCategories = [] }: StepProps) {
       {services.map(s => (
         <ScopeServiceGroup
           key={s.code}
-          label={getServiceLabel(s.code, categoryLabel(s.code))}
-          color={getServiceColor(s.code)}
+          label={SERVICE_CATALOG[s.code].label}
+          color={SERVICE_CATALOG[s.code].color}
           showLabel={showGroupLabels}
           scopeItems={s.scopeItems}
           onChange={items => updateScopeItems(s.code, items)}
@@ -1741,9 +1706,8 @@ function ScopeServiceGroup({ label, color, showLabel, scopeItems, onChange }: {
    divider (only shown when more than one service is selected) followed by its
    fee rows, in the same order services were selected on Step 2. Footnotes are
    likewise stacked sequentially beneath the table rather than tab-switched. */
-function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
+function Step4Pricing({ draft, setDraft }: StepProps) {
   const services = draft.services
-  const categoryLabel = (code: ServiceCode) => serviceCategories.find(c => c.code === code)?.label
 
   function updateService(code: ServiceCode, feeRows: FeeRow[], footnotes: PricingFootnote[]) {
     const summary = deriveFeeSummary(feeRows)
@@ -1785,8 +1749,8 @@ function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
         {services.map(s => (
           <PricingServiceGroup
             key={s.code}
-            label={getServiceLabel(s.code, categoryLabel(s.code))}
-            color={getServiceColor(s.code)}
+            label={SERVICE_CATALOG[s.code].label}
+            color={SERVICE_CATALOG[s.code].color}
             showLabel={showGroupLabels}
             feeRows={s.feeRows}
             onChange={feeRows => updateService(s.code, feeRows, s.footnotes)}
@@ -1807,7 +1771,7 @@ function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
         {services.map(s => (
           <FootnotesGroup
             key={s.code}
-            label={showGroupLabels ? getServiceLabel(s.code, categoryLabel(s.code)) : undefined}
+            label={showGroupLabels ? SERVICE_CATALOG[s.code].label : undefined}
             footnotes={s.footnotes}
             onChange={footnotes => updateService(s.code, s.feeRows, footnotes)}
           />
@@ -2684,12 +2648,6 @@ interface StepProps {
   // past step 1 (the step component unmounts on every step change, which
   // previously dropped an in-flight Region Settings fetch on the floor).
   applyRegionSettings?: (region: Region) => void
-  // Settings → Service Lines categories — used by Step2Services to render
-  // the selectable list, and by Step3Scope/Step4Pricing to label/color each
-  // selected service line's section header with the live Settings label
-  // rather than the (possibly stale, code-only) fallback.
-  serviceCategories?: ServiceCategory[]
-  serviceCategoriesLoading?: boolean
 }
 
 function FormField({ label, error, children, span }: {

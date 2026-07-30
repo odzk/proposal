@@ -292,12 +292,28 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           padding-left: 30px;
           margin: 4px 0 8px;
         }
-        /* .nv-sidebar-subnav-item itself (font-size, hover/active background,
-           color) is intentionally NOT styled here — it lives as a plain
-           global !important rule in globals.css instead, because this
-           styled-jsx version was proven to get shadowed/lost on hot-reload
-           (see the comment above that rule in globals.css). Don't re-add
-           those properties here. */
+        .nv-sidebar-subnav-item {
+          display: flex;
+          align-items: center;
+          padding: 10px 16px;
+          border-radius: 10px;
+          font-family: var(--font-raleway);
+          font-size: 14px;
+          font-weight: 500;
+          color: rgba(255,255,255,0.85) !important;
+          text-decoration: none;
+          transition: background var(--nv-dur) var(--nv-ease),
+                      color var(--nv-dur) var(--nv-ease);
+        }
+        .nv-sidebar-subnav-item:hover {
+          background: rgba(255,255,255,0.12);
+          color: #fff !important;
+        }
+        .nv-sidebar-subnav-item--active {
+          background: rgba(255,255,255,0.16);
+          color: #fff !important;
+          font-weight: 600;
+        }
 
         /* badge */
         .app-sidebar__badge {

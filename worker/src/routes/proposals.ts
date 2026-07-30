@@ -101,7 +101,7 @@ export async function getProposal(proposalId: string, env: Env, session: Session
 /* ─── Create proposal ──────────────────────────────────────── */
 export async function createProposal(request: Request, env: Env, session: Session): Promise<Response> {
   const body = await request.json() as any
-  const { hotel, services, sender, cover } = body
+  const { hotel, services, sender, cover, regionSettings } = body
 
   if (!hotel?.name)         return err('Hotel name required')
   if (!hotel?.contactEmail) return err('Contact email required')
@@ -137,14 +137,18 @@ export async function createProposal(request: Request, env: Env, session: Sessio
   await env.DB.prepare(`
     INSERT INTO proposals (
       id, np_id, hotel_name, contact_name, contact_email, contact_phone, contact_title,
-      property_address, region, status, sender_staff_id, account_manager_stf_id, sender_message,
+      property_address, region, nuvho_address, company_name, about_nuvho, footer_text, currency,
+      status, sender_staff_id, account_manager_stf_id, sender_message,
       cover_url, hubspot_deal_id, signing_token, expires_at, valid_until
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     proposalId, npId,
     hotel.name, hotel.contactName, hotel.contactEmail,
     hotel.contactPhone || null, hotel.contactTitle || null,
     hotel.propertyAddress || null, hotel.region || 'au',
+    regionSettings?.address || null, regionSettings?.companyName || null,
+    regionSettings?.aboutNuvho || null, regionSettings?.footerText || null,
+    regionSettings?.currency || 'AUD',
     sender.staffId, sender.accountManagerId || null, sender.message || null,
     cover?.coverUrl || null, hotel.hubspotDealId || null,
     signingToken, expiresAt, expiresAt,
@@ -296,7 +300,8 @@ export async function sendProposal(proposalId: string, env: Env, session: Sessio
 // transitions themselves go through sendProposal()/signProposal(), not here.
 const FULL_EDIT_FIELDS = [
   'hotel_name', 'contact_name', 'contact_email', 'contact_phone', 'contact_title',
-  'property_address', 'region', 'sender_staff_id', 'account_manager_stf_id', 'sender_message', 'cover_url',
+  'property_address', 'region', 'nuvho_address', 'company_name', 'about_nuvho', 'footer_text', 'currency',
+  'sender_staff_id', 'account_manager_stf_id', 'sender_message', 'cover_url',
   'hubspot_deal_id',
 ]
 const ALWAYS_ALLOWED_FIELDS = ['sender_message', 'cover_url', 'hubspot_deal_id']

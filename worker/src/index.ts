@@ -19,6 +19,11 @@ import {
 } from './routes/proposals'
 import { syncM365Staff } from './routes/staff'
 import {
+  getRegionSettings, updateRegionSettings,
+  getServiceCategories, createServiceCategory, updateServiceCategory,
+  deleteServiceCategory, reorderServiceCategories,
+} from './routes/settings'
+import {
   handleHotelGroupTypeahead,
   handleGetHotelGroup,
   handleCreateHotelGroup,
@@ -186,6 +191,39 @@ async function route(
   // Sync all Nuvho users from Microsoft 365 (Graph) into the staff table
   if (path === '/staff/sync-m365' && method === 'POST') {
     return syncM365Staff(request, env, session)
+  }
+
+  // Region Settings (Settings → Region Settings) — per-region (au/uk/ie)
+  // Nuvho address, legal footer, currency, and default T&Cs clauses, applied
+  // onto the proposal wizard's Hotel Details step when a region is selected.
+  if (path === '/settings/regions' && method === 'GET') {
+    return getRegionSettings(env, session)
+  }
+  const regionSettingsMatch = path.match(/^\/settings\/regions\/([a-z]{2})$/)
+  if (regionSettingsMatch && method === 'PUT') {
+    return updateRegionSettings(regionSettingsMatch[1], request, env, session)
+  }
+
+  // Service Categories (Settings → Service Lines) — main service-line
+  // categories offered on Step 2 (Services) of the proposal wizard.
+  if (path === '/settings/service-categories' && method === 'GET') {
+    return getServiceCategories(env, session)
+  }
+  if (path === '/settings/service-categories' && method === 'POST') {
+    return createServiceCategory(request, env, session)
+  }
+  // Reorder must be matched before the generic /:code match below, since
+  // that regex would otherwise treat the literal path segment "order" as a
+  // code value (same route-ordering gotcha as /registry/hotel-groups/search).
+  if (path === '/settings/service-categories/order' && method === 'PUT') {
+    return reorderServiceCategories(request, env, session)
+  }
+  const serviceCategoryMatch = path.match(/^\/settings\/service-categories\/([A-Za-z0-9_-]+)$/)
+  if (serviceCategoryMatch && method === 'PUT') {
+    return updateServiceCategory(serviceCategoryMatch[1], request, env, session)
+  }
+  if (serviceCategoryMatch && method === 'DELETE') {
+    return deleteServiceCategory(serviceCategoryMatch[1], env, session)
   }
 
   // Proposals list

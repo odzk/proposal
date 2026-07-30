@@ -46,7 +46,15 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   children.push(new Paragraph({ text: model.dateIssued, alignment: AlignmentType.CENTER, spacing: { after: 400 } }))
 
   // Letter
-  children.push(new Paragraph({ text: `Date of Issue: ${model.dateIssued}`, spacing: { after: 200 } }))
+  children.push(new Paragraph({ text: `Date of Issue: ${model.dateIssued}`, spacing: { after: model.nuvhoAddress ? 40 : 200 } }))
+  if (model.nuvhoAddress) {
+    model.nuvhoAddress.split('\n').forEach((line, i, arr) => {
+      children.push(new Paragraph({
+        text: line, alignment: AlignmentType.RIGHT,
+        spacing: { after: i === arr.length - 1 ? 200 : 0 },
+      }))
+    })
+  }
   children.push(new Paragraph({ text: model.contactName || '[Client Name]' }))
   children.push(new Paragraph({ text: model.hotelName || '[Hotel Name]' }))
   children.push(new Paragraph({ text: model.propertyAddress || '[Property Address]', spacing: { after: 200 } }))
@@ -87,9 +95,10 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   })
   if (model.services.length === 0) children.push(italic('No services selected yet.'))
 
-  // Nuvho Pty Ltd
-  children.push(heading('Nuvho Pty Ltd'))
+  // Nuvho Pty Ltd (Company Name + About — Settings → Region Settings)
+  children.push(heading(model.companyName || 'Nuvho Pty Ltd'))
   children.push(body(
+    model.aboutNuvho ||
     'Nuvho is a new breed of hotel services company, providing tailored solutions to clients from a services, ' +
     'systems and operational perspective. We partner with independent and boutique hotels to deliver the ' +
     'commercial capability of a larger group, without the overhead.'
@@ -120,7 +129,7 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
         rows.push(new TableRow({ children: [
           new TableCell({ children: [new Paragraph(row.component || '—')] }),
           new TableCell({ children: [new Paragraph(feeTypeLabel)] }),
-          new TableCell({ children: [new Paragraph(row.fee === '' ? '—' : `$${Number(row.fee).toLocaleString()}`)] }),
+          new TableCell({ children: [new Paragraph(row.fee === '' ? '—' : `${model.currencySymbol}${Number(row.fee).toLocaleString()}`)] }),
           new TableCell({ children: [new Paragraph(row.term === '' ? '—' : String(row.term))] }),
           new TableCell({ children: [new Paragraph(row.note || '')] }),
         ] }))
@@ -130,7 +139,7 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
     if (model.grandTotalMonthly > 0) {
       children.push(new Paragraph({
         alignment: AlignmentType.RIGHT, spacing: { before: 150, after: 100 },
-        children: [new TextRun({ text: `Combined monthly total: $${model.grandTotalMonthly.toLocaleString()}`, bold: true })],
+        children: [new TextRun({ text: `Combined monthly total: ${model.currencySymbol}${model.grandTotalMonthly.toLocaleString()}`, bold: true })],
       }))
     }
     model.footnotes.forEach(f => children.push(bullet(f.text)))
@@ -158,6 +167,15 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   }
   children.push(new Paragraph({ text: `On behalf of ${model.hotelName || '[Hotel Name]'}`, spacing: { before: 100 } }))
   children.push(new Paragraph({ text: `${model.signatoryName}${model.signatoryTitle ? ', ' + model.signatoryTitle : ''}` }))
+
+  if (model.footerText) {
+    model.footerText.split('\n').forEach((line, i) => {
+      children.push(new Paragraph({
+        children: [new TextRun({ text: line, size: 16, color: '5E6B6C' })],
+        spacing: { before: i === 0 ? 300 : 0, after: 40 },
+      }))
+    })
+  }
 
   // Appendix — Terms & Conditions
   children.push(heading('Appendix 1 – Terms & Conditions'))

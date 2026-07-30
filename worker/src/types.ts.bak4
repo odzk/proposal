@@ -133,16 +133,6 @@ export interface RegionSettingsRow {
   updated_at:   string
 }
 
-export interface ServiceCategoryRow {
-  code:        string
-  label:       string
-  description: string
-  sort_order:  number
-  active:      number
-  created_at:  string
-  updated_at:  string
-}
-
 export interface StaffRow {
   id:               string
   name:             string
