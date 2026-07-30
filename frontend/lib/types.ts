@@ -151,17 +151,39 @@ export interface RegionSettings {
   clauses:     TermsClause[]
 }
 
+// One default Scope-of-Work bullet within a section, as configured on a
+// ServiceCategory in Settings → Service Lines. Mirrors the worker's
+// service_categories.default_scope_json column shape.
+export interface ServiceCategoryScopeItem {
+  id:   string
+  text: string
+}
+
+// One default Scope-of-Work section (heading + bullets) as configured on a
+// ServiceCategory in Settings → Service Lines. Fully staff-editable — add/
+// edit/remove/reorder both sections and items within a section.
+export interface ServiceCategoryScopeSection {
+  id:      string
+  heading: string
+  items:   ServiceCategoryScopeItem[]
+}
+
 // A main service-line category managed from Settings → Service Lines — the
 // list Step 2 (Services) of the proposal wizard offers to select from. Fully
 // staff-editable (add/rename/reorder/deactivate/delete); `code` is stable
 // once created (stored on proposal_services.code) even though the category
-// itself can later be deleted or renamed.
+// itself can later be deleted or renamed. `defaultScope` is the default
+// Scope of Work (sections + bullets) copied into a new proposal's Step 3
+// when this category is added on Step 2 — editing it here only affects
+// proposals created afterward (see the "Settings are a template, not a live
+// link" pattern used elsewhere, e.g. RegionSettings clauses).
 export interface ServiceCategory {
-  code:        string
-  label:       string
-  description: string
-  sortOrder:   number
-  active:      boolean
+  code:         string
+  label:        string
+  description:  string
+  sortOrder:    number
+  active:       boolean
+  defaultScope: ServiceCategoryScopeSection[]
 }
 
 export type SignatureMethod = 'type' | 'draw'

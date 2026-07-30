@@ -6,7 +6,7 @@
 
 import type {
   FeeRow, FeeType, PricingFootnote, ProposalTerms, Region, ScopeItem,
-  ServiceCode, TermsClause,
+  ServiceCategoryScopeSection, ServiceCode, TermsClause,
 } from './types'
 
 export interface ScopeSectionItemDef {
@@ -203,15 +203,30 @@ function hashCode(code: string): number {
 // (no pre-built scope/pricing template) so callers never index undefined.
 // `label` lets callers pass the live Settings → Service Lines label so the
 // synthesized entry's label matches what's shown elsewhere, instead of the
-// bare code.
-export function getServiceEntry(code: string, label?: string): ServiceCatalogEntry {
+// bare code. `liveScope` lets callers pass the category's Settings-configured
+// default Scope of Work (service_categories.default_scope_json, fully staff-
+// editable) — when present and non-empty it takes priority over this file's
+// hardcoded `sections`, so Step 2/3 of the wizard always reflect what staff
+// have configured in Settings → Service Lines rather than a stale built-in.
+export function getServiceEntry(
+  code: string, label?: string, liveScope?: ServiceCategoryScopeSection[]
+): ServiceCatalogEntry {
   const entry = SERVICE_CATALOG[code]
-  if (entry) return entry
+  const sections: ScopeSectionDef[] = (liveScope && liveScope.length > 0)
+    ? liveScope.map(s => ({
+        id:      s.id,
+        heading: s.heading,
+        items:   s.items.map(i => ({ id: i.id, text: i.text })),
+      }))
+    : (entry?.sections ?? [])
+
+  if (entry) return { ...entry, label: label || entry.label, sections }
+
   return {
     code:               code as ServiceCode,
     label:              label || code,
     color:              FALLBACK_SERVICE_COLORS[hashCode(code) % FALLBACK_SERVICE_COLORS.length],
-    sections:           [],
+    sections,
     defaultPricingRows: [],
     pricingFootnotes:   [],
   }
@@ -225,8 +240,8 @@ export function getServiceColor(code: string): string {
   return getServiceEntry(code).color
 }
 
-export function initScopeItems(code: ServiceCode): ScopeItem[] {
-  const entry = getServiceEntry(code)
+export function initScopeItems(code: ServiceCode, liveScope?: ServiceCategoryScopeSection[]): ScopeItem[] {
+  const entry = getServiceEntry(code, undefined, liveScope)
   return entry.sections.flatMap(section =>
     section.items.map(item => ({
       id:             item.id,

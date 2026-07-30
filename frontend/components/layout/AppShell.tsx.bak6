@@ -6,7 +6,6 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { NuvhoLogo, NuvhoIconMark } from '@/components/ui/NuvhoLogo'
 import { useSession } from '@/components/auth/AuthGuard'
-import { hasUnsavedChanges } from '@/lib/navigationGuard'
 
 // CSS filter to render any coloured SVG as white on the dark sidebar
 const WHITE_ICON = 'brightness(0) invert(1)'
@@ -59,37 +58,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname()
   const router   = useRouter()
   const session  = useSession()
-
-  // Unsaved-changes confirmation — a page (currently only the proposal
-  // wizard) can register a guard via lib/navigationGuard.ts. When one is
-  // active and reports unsaved changes, clicking a sidebar/menu link or
-  // Sign out is intercepted here and held in pendingNav until the user
-  // confirms; "Cancel" just closes the popup and leaves the current page.
-  const [pendingNav, setPendingNav] = useState<{ href: string | null; signOut?: boolean } | null>(null)
-
-  function handleNavClick(e: React.MouseEvent, href: string) {
-    if (pathname === href) return
-    if (hasUnsavedChanges()) {
-      e.preventDefault()
-      setPendingNav({ href })
-    }
-  }
-
-  function handleSignOutClick() {
-    if (hasUnsavedChanges()) {
-      setPendingNav({ href: null, signOut: true })
-      return
-    }
-    handleSignOut()
-  }
-
-  function confirmPendingNav() {
-    const nav = pendingNav
-    setPendingNav(null)
-    if (!nav) return
-    if (nav.signOut) handleSignOut()
-    else if (nav.href) router.push(nav.href)
-  }
 
   // Derive initials for avatar (e.g. "Ody Bolger" → "OB", "info@nuvho.com" → "IN")
   const initials = session?.name
@@ -147,7 +115,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     href={item.href}
                     className="nv-sidebar-nav-item"
                     title={collapsed ? item.label : undefined}
-                    onClick={e => handleNavClick(e, item.href)}
                   >
                     <span className="nv-sidebar-nav-item__icon">{item.icon}</span>
                     {!collapsed && (
@@ -181,7 +148,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                           key={child.href}
                           href={child.href}
                           className={`nv-sidebar-subnav-item ${childActive ? 'nv-sidebar-subnav-item--active' : ''}`}
-                          onClick={e => handleNavClick(e, child.href)}
                         >
                           <span className="nv-sidebar-subnav-item__label">{child.label}</span>
                         </Link>
@@ -206,7 +172,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           )}
           <button
             className="app-sidebar__signout"
-            onClick={handleSignOutClick}
+            onClick={handleSignOut}
             disabled={signingOut}
             title="Sign out"
             aria-label="Sign out"
@@ -229,38 +195,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="app-main">
         {children}
       </main>
-
-      {/* Unsaved-changes confirmation popup */}
-      {pendingNav && (
-        <div className="nv-confirm-overlay" onMouseDown={() => setPendingNav(null)}>
-          <div
-            className="nv-confirm-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="nv-confirm-title"
-            onMouseDown={e => e.stopPropagation()}
-          >
-            <h3 id="nv-confirm-title">Unsaved changes</h3>
-            <p>You have unsaved changes on this proposal. If you leave now, they will be lost.</p>
-            <div className="nv-confirm-actions">
-              <button
-                type="button"
-                className="nv-btn nv-btn--outlined nv-btn--md"
-                onClick={() => setPendingNav(null)}
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                className="nv-btn nv-btn--solid nv-btn--md"
-                onClick={confirmPendingNav}
-              >
-                Leave without saving
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       <style jsx>{`
         .app-shell {
@@ -474,34 +408,6 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           flex: 1;
           min-width: 0;
           overflow-y: auto;
-        }
-
-        /* ── Unsaved-changes confirmation popup ──
-           Mirrors the hg-modal-overlay/hg-modal pattern used in the proposal
-           wizard (app/(app)/proposals/new/page.tsx) for visual consistency,
-           redeclared here since styled-jsx scopes rules to the component
-           that defines them. */
-        .nv-confirm-overlay {
-          position: fixed; inset: 0; z-index: 200;
-          background: rgba(30,40,45,0.45);
-          display: flex; align-items: center; justify-content: center;
-          padding: 24px;
-        }
-        .nv-confirm-modal {
-          width: 100%; max-width: 440px;
-          background: var(--nv-surface-card); border-radius: var(--nv-radius-md);
-          box-shadow: var(--nv-shadow-md);
-          padding: 28px;
-        }
-        .nv-confirm-modal h3 {
-          margin: 0 0 12px; font-family: var(--font-comfortaa); font-size: 20px;
-          font-weight: 700; color: var(--nv-text-heading);
-        }
-        .nv-confirm-modal p {
-          margin: 0 0 24px; font-size: 14px; color: var(--nv-text-muted); line-height: 1.5;
-        }
-        .nv-confirm-actions {
-          display: flex; justify-content: flex-end; gap: 12px;
         }
       `}</style>
     </div>

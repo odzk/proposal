@@ -13,7 +13,6 @@ import {
 import { buildDocModelFromDraft, downloadBlob } from '@/lib/documentModel'
 import { ProposalDocument } from '@/components/proposal/ProposalDocument'
 import { buildDocxFile } from '@/lib/exportDocx'
-import { setNavigationGuard } from '@/lib/navigationGuard'
 
 const STEPS = [
   { id: 1, label: 'Hotel Details'  },
@@ -53,18 +52,6 @@ export default function NewProposalPage() {
   const [staffLoading, setStaffLoading] = useState(true)
   const [staffError, setStaffError]     = useState('')
   const [loadingExisting, setLoadingExisting] = useState(!!editId)
-
-  // Unsaved-changes guard — lets AppShell warn before navigating away from
-  // an in-progress wizard (new or edit). baselineRef captures the draft's
-  // "saved" shape once — after the initial region-settings apply for a
-  // brand-new proposal, or once an existing proposal has finished loading
-  // for edit mode — and every render is compared against it. draftRef
-  // mirrors the latest draft so the guard function (registered once) always
-  // reads current state without re-registering on every keystroke. See
-  // lib/navigationGuard.ts.
-  const draftRef = useRef(draft)
-  draftRef.current = draft
-  const baselineRef = useRef<string | null>(null)
 
   // Region Settings (Settings → Region Settings) — Nuvho address, company
   // name, about text, legal footer, currency, and default T&Cs clauses per
@@ -241,41 +228,6 @@ export default function NewProposalPage() {
     }
     loadStaff()
     return () => { cancelled = true }
-  }, [])
-
-  // Capture the dirty-check baseline once the draft has settled into its
-  // "just loaded" shape — for a new proposal that's right after the default
-  // Region Settings/T&Cs have been applied; for an edit that's right after
-  // the existing proposal finishes loading. Guarded by the null-check so it
-  // only ever fires once per mount. If regionSettingsMap never resolves
-  // (e.g. offline), the baseline is simply never set and the guard reports
-  // "no unsaved changes" rather than blocking navigation indefinitely.
-  React.useEffect(() => {
-    if (baselineRef.current !== null) return
-    const ready = editId ? !loadingExisting : appliedInitialRegionSettings.current
-    if (ready) baselineRef.current = JSON.stringify(draft)
-  }, [draft, loadingExisting, editId])
-
-  // Register the guard AppShell checks before following a sidebar/menu
-  // click, and warn on an actual tab close/refresh too. Registered once on
-  // mount (not per-keystroke) — the closure reads draftRef/baselineRef so it
-  // always sees current values.
-  React.useEffect(() => {
-    function isDirty() {
-      return baselineRef.current !== null && JSON.stringify(draftRef.current) !== baselineRef.current
-    }
-    setNavigationGuard(isDirty)
-    function handleBeforeUnload(e: BeforeUnloadEvent) {
-      if (isDirty()) {
-        e.preventDefault()
-        e.returnValue = ''
-      }
-    }
-    window.addEventListener('beforeunload', handleBeforeUnload)
-    return () => {
-      setNavigationGuard(null)
-      window.removeEventListener('beforeunload', handleBeforeUnload)
-    }
   }, [])
 
   function goNext() {

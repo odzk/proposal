@@ -79,11 +79,12 @@ export async function getServiceCategories(env: Env, session: Session): Promise<
   ).all<ServiceCategoryRow>()
 
   const data = results.map(r => ({
-    code:        r.code,
-    label:       r.label,
-    description: r.description,
-    sortOrder:   r.sort_order,
-    active:      !!r.active,
+    code:         r.code,
+    label:        r.label,
+    description:  r.description,
+    sortOrder:    r.sort_order,
+    active:       !!r.active,
+    defaultScope: JSON.parse(r.default_scope_json || '[]'),
   }))
 
   return ok(data)
@@ -99,7 +100,10 @@ function slugifyCode(input: string): string {
 }
 
 export async function createServiceCategory(request: Request, env: Env, session: Session): Promise<Response> {
-  const body = await request.json() as { code?: string; label?: string; description?: string }
+  const body = await request.json() as {
+    code?: string; label?: string; description?: string
+    defaultScope?: { id: string; heading: string; items: { id: string; text: string }[] }[]
+  }
   const label = (body.label ?? '').trim()
   if (!label) return err('Label is required.')
 
@@ -115,13 +119,14 @@ export async function createServiceCategory(request: Request, env: Env, session:
     'SELECT COALESCE(MAX(sort_order), 0) AS max_order FROM service_categories'
   ).all<{ max_order: number }>()
   const nextOrder = (results[0]?.max_order ?? 0) + 1
+  const defaultScope = body.defaultScope ?? []
 
   await env.DB.prepare(`
-    INSERT INTO service_categories (code, label, description, sort_order, active, updated_at)
-    VALUES (?, ?, ?, ?, 1, datetime('now'))
-  `).bind(code, label, body.description ?? '', nextOrder).run()
+    INSERT INTO service_categories (code, label, description, sort_order, active, default_scope_json, updated_at)
+    VALUES (?, ?, ?, ?, 1, ?, datetime('now'))
+  `).bind(code, label, body.description ?? '', nextOrder, JSON.stringify(defaultScope)).run()
 
-  return ok({ code, label, description: body.description ?? '', sortOrder: nextOrder, active: true })
+  return ok({ code, label, description: body.description ?? '', sortOrder: nextOrder, active: true, defaultScope })
 }
 
 export async function updateServiceCategory(
@@ -132,16 +137,20 @@ export async function updateServiceCategory(
   ).bind(code).first<ServiceCategoryRow>()
   if (!existing) return err('Unknown service category.', 404)
 
-  const body = await request.json() as { label?: string; description?: string; active?: boolean }
+  const body = await request.json() as {
+    label?: string; description?: string; active?: boolean
+    defaultScope?: { id: string; heading: string; items: { id: string; text: string }[] }[]
+  }
 
   await env.DB.prepare(`
     UPDATE service_categories
-    SET label = ?, description = ?, active = ?, updated_at = datetime('now')
+    SET label = ?, description = ?, active = ?, default_scope_json = ?, updated_at = datetime('now')
     WHERE code = ?
   `).bind(
     body.label !== undefined ? body.label : existing.label,
     body.description !== undefined ? body.description : existing.description,
     body.active !== undefined ? (body.active ? 1 : 0) : existing.active,
+    body.defaultScope !== undefined ? JSON.stringify(body.defaultScope) : existing.default_scope_json,
     code,
   ).run()
 
