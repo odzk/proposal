@@ -32,16 +32,20 @@ export async function listProposals(request: Request, env: Env, session: Session
   return ok({ proposals: results, limit, offset })
 }
 
-/**
- * Nests each service's scope items, fee rows, and footnotes (Scope/Pricing
- * wizard steps) back onto its row, translated into the camelCase shape the
- * frontend wizard expects (see lib/types.ts DraftServiceLine). Shared by the
- * internal getProposal and the public getPublicProposal so both return
- * identical document data — buildDocModelFromProposal (frontend) depends on
- * this exact shape to render the same document either place.
- */
-async function attachServiceChildren(env: Env, services: ServiceRow[]) {
-  return Promise.all(services.map(async (svc) => {
+/* ─── Get single proposal ──────────────────────────────────── */
+export async function getProposal(proposalId: string, env: Env, session: Session): Promise<Response> {
+  const proposal = await env.DB.prepare('SELECT * FROM proposals WHERE id = ?')
+    .bind(proposalId).first<ProposalRow>()
+  if (!proposal) return err('Proposal not found', 404)
+
+  const { results: services } = await env.DB.prepare(
+    'SELECT * FROM proposal_services WHERE proposal_id = ?'
+  ).bind(proposalId).all<ServiceRow>()
+
+  // Nest each service's scope items, fee rows, and footnotes (Scope/Pricing
+  // wizard steps) back onto its row, translated into the camelCase shape the
+  // frontend wizard expects (see lib/types.ts DraftServiceLine).
+  const servicesWithChildren = await Promise.all(services.map(async (svc) => {
     const [{ results: scopeItems }, { results: feeRows }, { results: footnotes }] = await Promise.all([
       env.DB.prepare('SELECT * FROM proposal_scope_items WHERE proposal_service_id = ? ORDER BY sort_order')
         .bind(svc.id).all<ScopeItemRow>(),
@@ -63,36 +67,6 @@ async function attachServiceChildren(env: Env, services: ServiceRow[]) {
       footnotes: footnotes.map(f => ({ id: f.id, text: f.text })),
     }
   }))
-}
-
-/** Maps a proposal_terms row into the camelCase shape the frontend expects
- *  (ProposalDocModel / documentModel.ts) — shared by getProposal and
- *  getPublicProposal so the public Quote Approval section always matches
- *  what staff configured internally. */
-function mapTermsRow(termsRow: TermsRow | null) {
-  if (!termsRow) return null
-  return {
-    clauses:            JSON.parse(termsRow.clauses_json || '[]'),
-    validityDays:       termsRow.validity_days,
-    signatureRequired:  !!termsRow.signature_required,
-    signatureMethod:    termsRow.signature_method || 'type',
-    signatoryName:      termsRow.signatory_name || '',
-    signatoryTitle:     termsRow.signatory_title || '',
-    signatureDataUrl:   termsRow.signature_data_url || '',
-  }
-}
-
-/* ─── Get single proposal ──────────────────────────────────── */
-export async function getProposal(proposalId: string, env: Env, session: Session): Promise<Response> {
-  const proposal = await env.DB.prepare('SELECT * FROM proposals WHERE id = ?')
-    .bind(proposalId).first<ProposalRow>()
-  if (!proposal) return err('Proposal not found', 404)
-
-  const { results: services } = await env.DB.prepare(
-    'SELECT * FROM proposal_services WHERE proposal_id = ?'
-  ).bind(proposalId).all<ServiceRow>()
-
-  const servicesWithChildren = await attachServiceChildren(env, services)
 
   const sender = await env.DB.prepare('SELECT * FROM staff WHERE id = ?')
     .bind(proposal.sender_staff_id).first()
@@ -107,7 +81,15 @@ export async function getProposal(proposalId: string, env: Env, session: Session
 
   const termsRow = await env.DB.prepare('SELECT * FROM proposal_terms WHERE proposal_id = ?')
     .bind(proposalId).first<TermsRow>()
-  const terms = mapTermsRow(termsRow ?? null)
+  const terms = termsRow ? {
+    clauses:            JSON.parse(termsRow.clauses_json || '[]'),
+    validityDays:       termsRow.validity_days,
+    signatureRequired:  !!termsRow.signature_required,
+    signatureMethod:    termsRow.signature_method || 'type',
+    signatoryName:      termsRow.signatory_name || '',
+    signatoryTitle:     termsRow.signatory_title || '',
+    signatureDataUrl:   termsRow.signature_data_url || '',
+  } : null
 
   return ok({
     ...proposal, services: servicesWithChildren, sender, terms,
@@ -476,48 +458,19 @@ export async function getPublicProposal(token: string, env: Env): Promise<Respon
   const { results: services } = await env.DB.prepare(
     'SELECT * FROM proposal_services WHERE proposal_id = ?'
   ).bind(proposal.id).all<ServiceRow>()
-  const servicesWithChildren = await attachServiceChildren(env, services)
 
   const sender = await env.DB.prepare('SELECT name, email, role FROM staff WHERE id = ?')
     .bind(proposal.sender_staff_id).first()
 
-  // Terms (Quote Approval / signature configuration) — the public document
-  // preview needs the exact same shape buildDocModelFromProposal expects, so
-  // the client sees the same Fee Structure + Quote Approval sections the
-  // internal proposal detail view shows staff.
-  const termsRow = await env.DB.prepare('SELECT * FROM proposal_terms WHERE proposal_id = ?')
-    .bind(proposal.id).first<TermsRow>()
-  const terms = mapTermsRow(termsRow ?? null)
-
   // Strip internal fields from public response
   const { signing_token: _, ...safe } = proposal
-  return ok({ ...safe, services: servicesWithChildren, sender, terms })
+  return ok({ ...safe, services, sender })
 }
 
 /* ─── Public: sign proposal ────────────────────────────────── */
 export async function signProposal(token: string, request: Request, env: Env): Promise<Response> {
-  const body = await request.json() as {
-    signerName?:       string   // legacy field — kept for backward compatibility
-    signatureMethod?:  'type' | 'draw'
-    signatoryName?:    string
-    signatoryTitle?:   string
-    signatureDataUrl?: string
-  }
-
-  // Accept the same signature shapes the internal wizard's Terms &
-  // Conditions step produces (SignaturePad draw vs typed name), so the
-  // client's e-signature on the public page ends up in the exact same
-  // proposal_terms fields that render the document's Quote Approval block —
-  // rather than the plain "signer name" text this endpoint used to record.
-  const signatoryName = (body.signatoryName ?? body.signerName ?? '').trim()
-  const signatureDataUrl = (body.signatureDataUrl || '').trim()
-  const signatureMethod: 'type' | 'draw' =
-    body.signatureMethod === 'draw' || body.signatureMethod === 'type'
-      ? body.signatureMethod
-      : (signatureDataUrl ? 'draw' : 'type')
-
-  if (!signatoryName) return err('Signer name required')
-  if (signatureMethod === 'draw' && !signatureDataUrl) return err('Please draw a signature, or switch to "Type name"')
+  const body = await request.json() as { signerName?: string }
+  if (!body.signerName?.trim()) return err('Signer name required')
 
   const proposal = await env.DB.prepare(
     'SELECT * FROM proposals WHERE signing_token = ?'
@@ -534,27 +487,9 @@ export async function signProposal(token: string, request: Request, env: Env): P
     UPDATE proposals
     SET status='signed', signer_name=?, signed_at=datetime('now'), updated_at=datetime('now')
     WHERE id=?
-  `).bind(signatoryName, proposal.id).run()
+  `).bind(body.signerName.trim(), proposal.id).run()
 
-  // Merge the captured signature into the proposal's terms row (preserving
-  // whatever clauses/validity/etc. were already configured) so the same
-  // <ProposalDocument> Quote Approval block — viewed later on the internal
-  // Proposal Details page — shows the client's actual signature instead of
-  // the placeholder staff configured when building the proposal.
-  const existingTermsRow = await env.DB.prepare('SELECT * FROM proposal_terms WHERE proposal_id = ?')
-    .bind(proposal.id).first<TermsRow>()
-  const existingTerms = mapTermsRow(existingTermsRow ?? null)
-  await upsertTerms(env, proposal.id, {
-    clauses:           existingTerms?.clauses ?? [],
-    validityDays:      existingTerms?.validityDays ?? 30,
-    signatureRequired: true,
-    signatureMethod,
-    signatoryName,
-    signatoryTitle:    body.signatoryTitle?.trim() || existingTerms?.signatoryTitle || '',
-    signatureDataUrl:  signatureMethod === 'draw' ? signatureDataUrl : '',
-  })
-
-  await auditLog(env, proposal.id, 'signed', proposal.contact_email, { signatoryName, signatureMethod })
+  await auditLog(env, proposal.id, 'signed', proposal.contact_email, { signerName: body.signerName })
 
   // Sync status to every linked registry proposal record (best-effort)
   await syncRegistryStatus(env, proposal.id, 'signed', { signed_at: new Date().toISOString() })

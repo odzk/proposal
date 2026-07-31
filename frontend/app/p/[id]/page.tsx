@@ -3,23 +3,50 @@
 import React, { useState, useEffect } from 'react'
 import { useParams } from 'next/navigation'
 import { NuvhoLogo } from '@/components/ui/NuvhoLogo'
-import type { Proposal } from '@/lib/types'
+import { ProposalDocument } from '@/components/proposal/ProposalDocument'
+import { SignaturePad } from '@/components/proposal/SignaturePad'
+import { buildDocModelFromProposal } from '@/lib/documentModel'
+import type { ProposalDocModel } from '@/lib/documentModel'
 
+/* Public, unauthenticated proposal view (proposals.nuvho.com/p/{signing_token}).
+   Renders the exact same <ProposalDocument> the internal Proposal Details page
+   shows staff (cover, letter, background, scope of works, fee structure, and
+   Quote Approval / signature block, plus the terms appendix) so the client is
+   reviewing the real proposal rather than a placeholder summary. The Accept
+   This Proposal control below the document signs using whichever method
+   (typed name or drawn signature) the proposal's Quote Approval section is
+   configured for, via the same <SignaturePad> the internal wizard uses. */
 export default function PublicProposalPage() {
   const params = useParams<{ id: string }>()
-  const [proposal, setProposal] = useState<Proposal | null>(null)
+  const [raw,      setRaw]      = useState<any | null>(null)
+  const [docModel, setDocModel] = useState<ProposalDocModel | null>(null)
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState<string | null>(null)
   const [signing,  setSigning]  = useState(false)
   const [signed,   setSigned]   = useState(false)
-  const [sigName,  setSigName]  = useState('')
+
+  // Signing form state — seeded from the proposal's own Quote Approval
+  // fields once it loads, so a pre-filled signatory name/title carries
+  // through rather than starting blank. sigMethod is a client-chosen toggle
+  // (Type name / Draw signature) — same choice the internal wizard's Terms
+  // step offers staff — rather than being locked to one method.
+  const [sigMethod,  setSigMethod]  = useState<'type' | 'draw'>('type')
+  const [sigName,    setSigName]    = useState('')
+  const [sigTitle,   setSigTitle]   = useState('')
+  const [sigDataUrl, setSigDataUrl] = useState('')
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/p/${params.id}`)
       .then(r => r.json())
       .then(d => {
         if (d.error) throw new Error(d.error)
-        setProposal(d.data)
+        setRaw(d.data)
+        const model = buildDocModelFromProposal(d.data)
+        setDocModel(model)
+        setSigMethod(model.signatureMethod === 'draw' ? 'draw' : 'type')
+        setSigName(model.signatoryName)
+        setSigTitle(model.signatoryTitle)
+        setSigDataUrl(model.signatureMethod === 'draw' ? model.signatureDataUrl : '')
         setSigned(d.data.status === 'signed')
       })
       .catch(e => setError(e.message))
@@ -27,16 +54,35 @@ export default function PublicProposalPage() {
   }, [params.id])
 
   async function handleSign() {
+    if (!docModel) return
     if (!sigName.trim()) return
+    if (sigMethod === 'draw' && !sigDataUrl) return
     setSigning(true)
+    setError(null)
     try {
       const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/p/${params.id}/sign`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signerName: sigName }),
+        body: JSON.stringify({
+          signatureMethod:   sigMethod,
+          signatoryName:     sigName.trim(),
+          signatoryTitle:    sigTitle.trim(),
+          signatureDataUrl:  sigMethod === 'draw' ? sigDataUrl : '',
+        }),
       })
       const data = await res.json()
-      if (!res.ok) throw new Error(data.error)
+      if (!res.ok || data.error) throw new Error(data.error || 'Failed to sign proposal')
+
+      // Reflect the just-captured signature straight into the rendered
+      // document so the Quote Approval section shows exactly what was
+      // signed, without a refetch.
+      setDocModel(prev => prev ? {
+        ...prev,
+        signatureMethod:  sigMethod,
+        signatoryName:    sigName.trim(),
+        signatoryTitle:   sigTitle.trim(),
+        signatureDataUrl: sigMethod === 'draw' ? sigDataUrl : '',
+      } : prev)
       setSigned(true)
     } catch (e: any) {
       setError(e.message)
@@ -46,10 +92,10 @@ export default function PublicProposalPage() {
   }
 
   if (loading) return <LoadingScreen />
-  if (error || !proposal) return <ErrorScreen message={error || 'Proposal not found'} />
+  if (!raw || !docModel) return <ErrorScreen message={error || 'Proposal not found'} />
 
-  const isExpired = proposal.status === 'expired' ||
-    (proposal.expiryDate && new Date(proposal.expiryDate) < new Date())
+  const isExpired = raw.status === 'expired' ||
+    (raw.expires_at && new Date(raw.expires_at) < new Date())
 
   return (
     <div className="public-page">
@@ -57,53 +103,26 @@ export default function PublicProposalPage() {
       <header className="public-header">
         <NuvhoLogo variant="white" height={40} />
         <div className="public-header__meta">
-          <span className="public-header__ref">Proposal #{proposal.id.slice(0,8).toUpperCase()}</span>
-          {proposal.expiryDate && (
+          <span className="public-header__ref">
+            Proposal #{raw.np_id || (raw.id ? raw.id.slice(0, 8).toUpperCase() : '')}
+          </span>
+          {raw.expires_at && (
             <span className="public-header__expiry">
-              Valid until {new Date(proposal.expiryDate).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })}
+              Valid until {new Date(raw.expires_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })}
             </span>
           )}
         </div>
       </header>
 
-      {/* Cover */}
-      <div className="public-cover">
-        <div className="public-cover__overlay" />
-        <div className="public-cover__content">
-          <div className="public-cover__prepared">Prepared for</div>
-          <h1 className="public-cover__hotel">{proposal.hotelName}</h1>
-          <p className="public-cover__attn">Attention: {proposal.clientName}</p>
-          {proposal.expiryDate && (
-            <p className="public-cover__date">
-              Valid until {new Date(proposal.expiryDate).toLocaleDateString('en-AU', { day:'numeric', month:'long', year:'numeric' })}
-            </p>
-          )}
-        </div>
+      {/* The actual proposal — same component + model builder as the
+          internal Proposal Details page, so nothing here is a summary or
+          placeholder. */}
+      <div className="public-doc-wrap">
+        <ProposalDocument model={docModel} />
       </div>
 
-      {/* Body */}
+      {/* Accept & Sign */}
       <div className="public-body">
-        {/* Intro / Personal message */}
-        {(proposal as any).senderMessage && (
-          <section className="public-section">
-            <p className="public-intro">{(proposal as any).senderMessage}</p>
-          </section>
-        )}
-
-        {/* Services summary */}
-        <section className="public-section">
-          <h2 className="public-section-title">Proposed Services</h2>
-          <div className="public-services">
-            {/* Services rendered from proposal.services fetched separately */}
-            <div className="public-services-placeholder">
-              <p style={{ color: 'var(--nv-text-muted)', fontSize: 14 }}>
-                Service details loaded from proposal data.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* Signing section */}
         <section className="public-section public-sign-section">
           {signed ? (
             <div className="public-signed">
@@ -126,23 +145,65 @@ export default function PublicProposalPage() {
               <p style={{ fontSize: 14, color: 'var(--nv-text-muted)', marginBottom: 20 }}>
                 By signing below, you acknowledge and accept the terms and services outlined in this proposal.
               </p>
-              <div className="sign-input-row">
-                <input
-                  className="nv-input"
-                  placeholder="Your full name"
-                  value={sigName}
-                  onChange={e => setSigName(e.target.value)}
-                  style={{ flex: 1 }}
-                />
-                <button
-                  className="nv-btn nv-btn--solid nv-btn--lg"
-                  onClick={handleSign}
-                  disabled={signing || !sigName.trim()}
-                  aria-busy={signing}
-                >
-                  {signing ? 'Signing…' : 'Accept & Sign'}
+
+              <div className="sign-fields">
+                <div className="sign-field">
+                  <label className="sign-label">Your full name</label>
+                  <input
+                    className="nv-input"
+                    placeholder="Your full name"
+                    value={sigName}
+                    onChange={e => setSigName(e.target.value)}
+                  />
+                </div>
+                <div className="sign-field">
+                  <label className="sign-label">Title (optional)</label>
+                  <input
+                    className="nv-input"
+                    placeholder="e.g. General Manager"
+                    value={sigTitle}
+                    onChange={e => setSigTitle(e.target.value)}
+                  />
+                </div>
+              </div>
+
+              {/* Same Type name / Draw signature toggle as the internal
+                  wizard's Terms & Conditions step — the client picks how
+                  they sign rather than being locked to one method. */}
+              <div className="signature-method" role="tablist" aria-label="Signature method">
+                <button type="button" role="tab" aria-selected={sigMethod === 'type'}
+                  className={`signature-method__btn ${sigMethod === 'type' ? 'signature-method__btn--active' : ''}`}
+                  onClick={() => setSigMethod('type')}>
+                  Type name
+                </button>
+                <button type="button" role="tab" aria-selected={sigMethod === 'draw'}
+                  className={`signature-method__btn ${sigMethod === 'draw' ? 'signature-method__btn--active' : ''}`}
+                  onClick={() => setSigMethod('draw')}>
+                  Draw signature
                 </button>
               </div>
+
+              {sigMethod === 'draw' ? (
+                <div className="sign-capture">
+                  <span className="sign-capture__label">Draw signature</span>
+                  <SignaturePad value={sigDataUrl} onChange={setSigDataUrl} />
+                </div>
+              ) : (
+                <div className="sign-capture">
+                  <span className="sign-capture__label">Signature preview</span>
+                  <div className="sign-capture__script">{sigName || 'Your name here'}</div>
+                </div>
+              )}
+
+              <button
+                className="nv-btn nv-btn--solid nv-btn--lg"
+                onClick={handleSign}
+                disabled={signing || !sigName.trim() || (sigMethod === 'draw' && !sigDataUrl)}
+                aria-busy={signing}
+              >
+                {signing ? 'Signing…' : 'Accept & Sign'}
+              </button>
+
               {error && (
                 <p style={{ color: 'var(--nv-error)', fontSize: 13, marginTop: 8 }}>{error}</p>
               )}
@@ -177,71 +238,26 @@ export default function PublicProposalPage() {
         .public-header__ref  { font-size: 12px; color: rgba(255,255,255,0.6); display: block; }
         .public-header__expiry { font-size: 11px; color: rgba(255,255,255,0.45); }
 
-        /* Cover */
-        .public-cover {
-          height: 340px;
-          background: linear-gradient(135deg, #1E5163 0%, #28687F 60%, #80B9BF 100%);
-          position: relative;
-          display: flex;
-          align-items: flex-end;
-          padding: 48px 56px;
-        }
-        @media (max-width: 600px) { .public-cover { padding: 32px 20px; height: 260px; } }
-        .public-cover__overlay {
-          position: absolute; inset: 0;
-          background: rgba(0,0,0,0.18);
-          pointer-events: none;
-        }
-        .public-cover__content { position: relative; z-index: 1; }
-        .public-cover__prepared {
-          font-size: 13px;
-          color: rgba(255,255,255,0.7);
-          text-transform: uppercase;
-          letter-spacing: 0.1em;
-          margin-bottom: 6px;
-        }
-        .public-cover__hotel {
-          font-family: var(--font-comfortaa);
-          font-size: 42px;
-          font-weight: 700;
-          color: white;
-          line-height: 1.05;
-          margin-bottom: 10px;
-        }
-        @media (max-width: 600px) { .public-cover__hotel { font-size: 28px; } }
-        .public-cover__attn { color: rgba(255,255,255,0.8); font-size: 16px; }
-        .public-cover__date { color: rgba(255,255,255,0.6); font-size: 13px; margin-top: 4px; }
+        /* Document wrapper — ProposalDocument renders its own cover/letter/
+           section pages inside this, so it just needs the page's top/bottom
+           breathing room, not its own max-width (ProposalDocument sets that
+           per-page already). */
+        .public-doc-wrap { padding: 32px 24px 0; }
 
-        /* Body */
         .public-body {
           max-width: 820px;
           width: 100%;
           margin: 0 auto;
-          padding: 48px 24px;
-          flex: 1;
+          padding: 0 24px 48px;
         }
 
-        .public-section { margin-bottom: 48px; }
+        .public-section { margin-bottom: 0; }
         .public-section-title {
           font-family: var(--font-comfortaa);
           font-size: 22px;
           font-weight: 700;
           color: var(--nv-text-heading);
           margin-bottom: 20px;
-        }
-        .public-intro {
-          font-size: 16px;
-          line-height: 1.75;
-          color: var(--nv-text-body);
-          border-left: 3px solid var(--nv-tropical-teal);
-          padding-left: 20px;
-        }
-
-        .public-services-placeholder {
-          padding: 24px;
-          background: var(--nv-surface-card);
-          border-radius: var(--nv-radius-md);
-          border: 1px solid var(--nv-border-hair);
         }
 
         /* Signing */
@@ -253,14 +269,39 @@ export default function PublicProposalPage() {
           box-shadow: var(--nv-shadow-sm);
         }
 
-        .sign-input-row {
+        .sign-fields {
           display: flex;
-          gap: 12px;
-          align-items: center;
+          gap: 16px;
+          margin-bottom: 20px;
         }
-        @media (max-width: 600px) {
-          .sign-input-row { flex-direction: column; }
-          .sign-input-row button { width: 100%; justify-content: center; }
+        .sign-field { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+        .sign-label {
+          font-size: 11px; font-weight: 700; color: var(--nv-text-muted);
+          text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        @media (max-width: 600px) { .sign-fields { flex-direction: column; } }
+
+        .signature-method { display: flex; gap: 8px; margin-bottom: 20px; }
+        .signature-method__btn {
+          padding: 7px 16px; border-radius: 20px; border: 2px solid var(--nv-border);
+          background: white; color: var(--nv-text-body); font-size: 12px; font-weight: 600;
+          font-family: var(--font-comfortaa); cursor: pointer;
+        }
+        .signature-method__btn--active { border-color: var(--nv-blue-slate); background: var(--nv-blue-slate); color: white; }
+
+        .sign-capture { margin-bottom: 20px; }
+        .sign-capture__label {
+          display: block; font-size: 11px; font-weight: 700; color: var(--nv-text-muted);
+          text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px;
+        }
+        .sign-capture__script {
+          font-family: var(--font-signature);
+          font-size: 40px;
+          line-height: 1.3;
+          color: var(--nv-text-heading);
+          padding: 6px 14px 10px;
+          border-bottom: 1.5px solid var(--nv-border);
+          max-width: 420px;
         }
 
         .public-signed, .public-expired {

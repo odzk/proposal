@@ -12,7 +12,6 @@ import {
   createProposal,
   sendProposal,
   updateProposal,
-  deleteProposal,
   getDashboardStats,
   getPublicProposal,
   signProposal,
@@ -246,9 +245,8 @@ async function route(
   const proposalMatch = path.match(/^\/proposals\/([A-Z0-9]+)$/)
   if (proposalMatch) {
     const id = proposalMatch[1]
-    if (method === 'GET')    return getProposal(id, env, session)
-    if (method === 'PATCH')  return updateProposal(id, request, env, session)
-    if (method === 'DELETE') return deleteProposal(id, env, session)
+    if (method === 'GET')   return getProposal(id, env, session)
+    if (method === 'PATCH') return updateProposal(id, request, env, session)
   }
 
   // Send proposal

@@ -35,7 +35,6 @@ export default function ProposalDetailPage() {
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState('')
   const [sending,  setSending]  = useState(false)
-  const [deleting, setDeleting] = useState(false)
   const [copied,   setCopied]   = useState<'id' | 'link' | null>(null)
   const [showDoc,  setShowDoc]  = useState(false)
   const [exporting, setExporting] = useState<'pdf' | 'word' | null>(null)
@@ -95,28 +94,6 @@ export default function ProposalDetailPage() {
       alert('Failed to send: ' + e.message)
     } finally {
       setSending(false)
-    }
-  }
-
-  // Restricted to draft proposals — mirrors the backend's deleteProposal()
-  // check (409 for anything else), which mirrors the existing Edit/Send
-  // (canSend) gate: a sent or signed proposal is a real record, not
-  // something to silently erase.
-  async function handleDelete() {
-    if (!confirm(
-      `Permanently delete the proposal for ${proposal?.hotel_name}? This cannot be undone.`
-    )) return
-    setDeleting(true)
-    try {
-      const res = await fetch(`${WORKER}/proposals/${id}`, {
-        method: 'DELETE', credentials: 'include',
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error || 'Failed to delete proposal')
-      router.push('/proposals')
-    } catch (e: any) {
-      alert('Failed to delete: ' + e.message)
-      setDeleting(false)
     }
   }
 
@@ -233,16 +210,6 @@ export default function ProposalDetailPage() {
               disabled={sending}
             >
               {sending ? 'Sending…' : '✉ Send Proposal'}
-            </button>
-          )}
-          {canSend && (
-            <button
-              className="nv-btn nv-btn--outlined nv-btn--md"
-              style={{ borderColor: 'var(--nv-error)', color: 'var(--nv-error)' }}
-              onClick={handleDelete}
-              disabled={deleting}
-            >
-              {deleting ? 'Deleting…' : '🗑 Delete'}
             </button>
           )}
           {proposal.status === 'sent' && (
