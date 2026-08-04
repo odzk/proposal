@@ -46,6 +46,10 @@ export interface ProposalDocModel {
   signatoryName:     string
   signatoryTitle:    string
   signatureDataUrl:  string
+  // Optional rich-text (HTML, authored via TinyMCE on the wizard's Signature
+  // step) message rendered above the signature block, in place of the
+  // default "Should the terms of this proposal be acceptable…" sentence.
+  signatureMessage:  string
   clauses:           TermsClause[]
 }
 
@@ -84,7 +88,10 @@ export function buildDocModelFromDraft(draft: ProposalDraft, staff: StaffLike[])
     currencySymbol:    currencySymbol(draft.regionSettings.currency),
     dateIssued:        formatToday(),
     coverUrl:          draft.cover.coverUrl,
-    introMessage:      draft.sender.message || `I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${draft.hotel.name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.`,
+    // sender.message is now authored via TinyMCE (Step 5) — always HTML.
+    // The fallback default is wrapped in <p> so introMessage is always valid
+    // HTML either way (see ProposalDocument.tsx / exportDocx.ts renderers).
+    introMessage:      draft.sender.message || `<p>I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${draft.hotel.name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.</p>`,
     senderName:        sender?.name || '',
     senderRoleLabel:   sender ? (ROLE_LABELS[sender.role_type] || sender.role_type) : '',
     senderEmail:       sender?.email || '',
@@ -97,6 +104,7 @@ export function buildDocModelFromDraft(draft: ProposalDraft, staff: StaffLike[])
     signatoryName:     draft.terms.signatoryName,
     signatoryTitle:    draft.terms.signatoryTitle,
     signatureDataUrl:  draft.terms.signatureDataUrl,
+    signatureMessage:  draft.terms.signatureMessage || '',
     clauses:           draft.terms.clauses.filter(c => c.enabled),
   }
 }
@@ -127,7 +135,7 @@ export function buildDocModelFromProposal(p: any): ProposalDocModel {
     currencySymbol:    currencySymbol(p.currency || 'AUD'),
     dateIssued:        p.created_at ? new Date(p.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : formatToday(),
     coverUrl:          p.cover_url || '',
-    introMessage:      p.sender_message || `I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${p.hotel_name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.`,
+    introMessage:      p.sender_message || `<p>I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${p.hotel_name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.</p>`,
     senderName:        sender?.name || '',
     senderRoleLabel:   sender ? (ROLE_LABELS[sender.role_type] || sender.role_type) : '',
     senderEmail:       sender?.email || '',
@@ -140,6 +148,7 @@ export function buildDocModelFromProposal(p: any): ProposalDocModel {
     signatoryName:     terms.signatoryName || '',
     signatoryTitle:    terms.signatoryTitle || '',
     signatureDataUrl:  terms.signatureDataUrl || '',
+    signatureMessage:  terms.signatureMessage || '',
     clauses:           (terms.clauses || []).filter((c: TermsClause) => c.enabled),
   }
 }

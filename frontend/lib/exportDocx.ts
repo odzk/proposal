@@ -36,6 +36,25 @@ async function dataUrlToBytes(dataUrl: string): Promise<Uint8Array> {
   return new Uint8Array(await res.arrayBuffer())
 }
 
+// Rough HTML → plain-paragraph conversion for the Signature step's TinyMCE
+// message. The `docx` package builds native paragraph runs rather than
+// parsing HTML, so block-level tags become paragraph breaks and everything
+// else is stripped down to plain text. Good enough for a short message;
+// bold/italic/list formatting is not preserved in the .docx export.
+function htmlToParagraphs(html: string): string[] {
+  return html
+    .replace(/<\/(p|div|li|h[1-6])>/gi, '\n')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean)
+}
+
 export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   const multiSvc = model.services.length > 1
   const children: (Paragraph | Table)[] = []
@@ -60,7 +79,8 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   children.push(new Paragraph({ text: model.propertyAddress || '[Property Address]', spacing: { after: 200 } }))
   children.push(new Paragraph({ children: [new TextRun({ text: `RE: ${model.title}`, bold: true })], spacing: { after: 200 } }))
   children.push(body(`Dear ${model.contactName || '[Client Name]'},`))
-  children.push(body(model.introMessage))
+  // introMessage is authored via TinyMCE (wizard Step 5) — always HTML now.
+  htmlToParagraphs(model.introMessage).forEach(line => children.push(body(line)))
 
   ;['Background', 'Scope of Works', 'Nuvho Pty Ltd', 'Fee Structure', 'Quote Approval', 'Appendix 1 – Terms & Conditions']
     .forEach(item => children.push(new Paragraph({ children: [new TextRun({ text: item, bold: true })], spacing: { after: 40 } })))
@@ -149,7 +169,12 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
 
   // Quote Approval
   children.push(heading('Quote Approval'))
-  children.push(body(`Should the terms of this proposal be acceptable, please sign below and return the applicable service agreement. This proposal remains valid for ${model.validityDays} days from the date of issue.`))
+  const signatureMessageText = model.signatureMessage?.trim() ? htmlToParagraphs(model.signatureMessage) : []
+  if (signatureMessageText.length) {
+    signatureMessageText.forEach(line => children.push(body(line)))
+  } else {
+    children.push(body(`Should the terms of this proposal be acceptable, please sign below and return the applicable service agreement. This proposal remains valid for ${model.validityDays} days from the date of issue.`))
+  }
 
   if (!model.signatureRequired) {
     children.push(italic('No signature block requested for this proposal.'))

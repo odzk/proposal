@@ -51,6 +51,8 @@ export interface ProposalRow {
   sender_staff_id:     string
   account_manager_stf_id: string | null
   sender_message:      string | null
+  sender_cc:           string | null
+  sender_bcc:          string | null
   cover_url:           string | null
   pdf_url:             string | null
   signed_pdf_url:      string | null
@@ -120,12 +122,37 @@ export interface TermsRow {
   signatory_name:      string | null
   signatory_title:     string | null
   signature_data_url:  string | null
+  signature_message:   string | null
+}
+
+export interface AttachmentRow {
+  id:           string
+  proposal_id:  string
+  filename:     string
+  content_type: string | null
+  size_bytes:   number
+  r2_key:       string
+  sort_order:   number
+  created_at:   string
 }
 
 export interface RegionSettingsRow {
   region:       string
   address:      string
   company_name: string
+  about_nuvho:  string
+  footer_text:  string
+  currency:     string
+  clauses_json: string
+  updated_at:   string
+}
+
+// entity_settings — replaces RegionSettingsRow above (per Master Registry
+// entity_code instead of per region). No company_name column: the legal
+// entity name is never stored locally, always read live from the registry.
+export interface EntitySettingsRow {
+  entity_code:  string
+  address:      string
   about_nuvho:  string
   footer_text:  string
   currency:     string

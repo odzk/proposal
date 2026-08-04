@@ -1,62 +1,86 @@
-import type { Env, RegionSettingsRow, ServiceCategoryRow, Session } from '../types'
+import type { Env, EntitySettingsRow, ServiceCategoryRow, Session } from '../types'
 import { ok, err } from '../lib/response'
+import { listEntities, RegistryError } from '../lib/registry'
 
-const VALID_REGIONS = ['au', 'uk', 'ie']
+const REGION_ORDER = ['au', 'uk', 'ie'] as const
+const REGION_FALLBACK_CURRENCY: Record<string, string> = { au: 'AUD', uk: 'GBP', ie: 'EUR' }
 
-/* ─── Get all region settings (Settings → Region Settings) ────
- * Always returns exactly the 3 seeded regions (au/uk/ie) — schema.sql /
- * migrations/0001_region_settings.sql seed them with INSERT OR IGNORE, so
- * this table should never be empty in practice, but we still guard against
- * a not-yet-migrated database returning nothing.
+function operatingEntityCodeForRegion(region: string): string {
+  return `NVH-${region.toUpperCase()}-OPS`
+}
+
+/* ─── Get all entities, merged with this app's own settings (Settings →
+ * Entities) ──────────────────────────────────────────────────────────────
+ * Legal identity (legal_name/jurisdiction/role/is_active/is_data_controller)
+ * is read live from the Nuvho Master Registry — the source of truth for
+ * which legal entities exist; this app never stores or edits that. Address/
+ * about/footer/currency/T&Cs are this app's own data (entity_settings),
+ * merged in here by entity_code. Every active entity the registry returns
+ * is included, not just the 3 client-facing "operating" ones.
  */
-export async function getRegionSettings(env: Env, session: Session): Promise<Response> {
-  const { results } = await env.DB.prepare(
-    'SELECT * FROM region_settings ORDER BY region'
-  ).all<RegionSettingsRow>()
+export async function getEntitySettings(env: Env, session: Session): Promise<Response> {
+  let entities
+  try {
+    entities = await listEntities(env)
+  } catch (e) {
+    if (e instanceof RegistryError) return err(e.message, e.status)
+    return err(e instanceof Error ? e.message : 'Registry lookup failed', 502)
+  }
 
-  const data = results.map(r => ({
-    region:      r.region,
-    address:     r.address,
-    companyName: r.company_name,
-    aboutNuvho:  r.about_nuvho,
-    footerText:  r.footer_text,
-    currency:    r.currency,
-    clauses:     JSON.parse(r.clauses_json || '[]'),
-  }))
+  const { results } = await env.DB.prepare('SELECT * FROM entity_settings').all<EntitySettingsRow>()
+  const byCode = new Map(results.map(r => [r.entity_code, r]))
+
+  const data = entities.map(e => {
+    const row = byCode.get(e.entity_code)
+    return {
+      entityCode:       e.entity_code,
+      legalName:        e.legal_name,
+      jurisdiction:     e.jurisdiction,
+      role:             e.role,
+      isDataController: e.is_data_controller,
+      isActive:         e.is_active,
+      address:          row?.address ?? '',
+      aboutNuvho:       row?.about_nuvho ?? '',
+      footerText:       row?.footer_text ?? '',
+      currency:         row?.currency ?? 'AUD',
+      clauses:          JSON.parse(row?.clauses_json || '[]'),
+    }
+  })
 
   return ok(data)
 }
 
-/* ─── Update one region's settings ──────────────────────────── */
-export async function updateRegionSettings(
-  region: string, request: Request, env: Env, session: Session
+/* ─── Update one entity's settings (address/about/footer/currency/T&Cs) ───
+ * entity_code isn't re-validated against the live registry here — the
+ * Settings → Entities UI only ever submits an entity_code it just fetched
+ * from GET /settings/entities, so an extra round-trip per save would be
+ * pure overhead. */
+export async function updateEntitySettings(
+  entityCode: string, request: Request, env: Env, session: Session
 ): Promise<Response> {
-  if (!VALID_REGIONS.includes(region)) return err('Unknown region', 404)
+  if (!entityCode) return err('entity_code is required', 404)
 
   const body = await request.json() as {
-    address?:     string
-    companyName?: string
-    aboutNuvho?:  string
-    footerText?:  string
-    currency?:    string
-    clauses?:     { id: string; heading: string; text: string; enabled: boolean }[]
+    address?:    string
+    aboutNuvho?: string
+    footerText?: string
+    currency?:   string
+    clauses?:    { id: string; heading: string; text: string; enabled: boolean }[]
   }
 
   await env.DB.prepare(`
-    INSERT INTO region_settings (region, address, company_name, about_nuvho, footer_text, currency, clauses_json, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'))
-    ON CONFLICT(region) DO UPDATE SET
+    INSERT INTO entity_settings (entity_code, address, about_nuvho, footer_text, currency, clauses_json, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+    ON CONFLICT(entity_code) DO UPDATE SET
       address      = excluded.address,
-      company_name = excluded.company_name,
       about_nuvho  = excluded.about_nuvho,
       footer_text  = excluded.footer_text,
       currency     = excluded.currency,
       clauses_json = excluded.clauses_json,
       updated_at   = datetime('now')
   `).bind(
-    region,
+    entityCode,
     body.address ?? '',
-    body.companyName ?? '',
     body.aboutNuvho ?? '',
     body.footerText ?? '',
     body.currency ?? 'AUD',
@@ -66,7 +90,48 @@ export async function updateRegionSettings(
   return ok({ updated: true })
 }
 
-/* ─── Service Categories (Settings → Service Lines) ─────────────
+/* ─── Region settings — computed, read-only feed for the proposal wizard ───
+ * Settings → Region Settings no longer exists as an editable page (see
+ * Settings → Entities instead) — this endpoint is kept ONLY so the wizard's
+ * Hotel Details step (Step1HotelDetails / applyRegionSettings in
+ * frontend/app/(app)/proposals/new/page.tsx) keeps working completely
+ * unchanged. For each region it resolves that region's client-facing
+ * operating entity (NVH-{GEO}-OPS), pulls that entity's settings from
+ * entity_settings, and its legal name live from the registry — exactly the
+ * entity a hotel group in that geo is actually contracted under.
+ */
+export async function getRegionSettings(env: Env, session: Session): Promise<Response> {
+  let entities: Awaited<ReturnType<typeof listEntities>> = []
+  try {
+    entities = await listEntities(env)
+  } catch {
+    // Wizard defaults degrade to blank company names rather than fail the
+    // whole Hotel Details step if the registry is briefly unreachable.
+  }
+  const byCode = new Map(entities.map(e => [e.entity_code, e]))
+
+  const { results } = await env.DB.prepare('SELECT * FROM entity_settings').all<EntitySettingsRow>()
+  const settingsByCode = new Map(results.map(r => [r.entity_code, r]))
+
+  const data = REGION_ORDER.map(region => {
+    const entityCode = operatingEntityCodeForRegion(region)
+    const entity = byCode.get(entityCode)
+    const row = settingsByCode.get(entityCode)
+    return {
+      region,
+      address:     row?.address ?? '',
+      companyName: entity?.legal_name ?? '',
+      aboutNuvho:  row?.about_nuvho ?? '',
+      footerText:  row?.footer_text ?? '',
+      currency:    row?.currency ?? REGION_FALLBACK_CURRENCY[region] ?? 'AUD',
+      clauses:     JSON.parse(row?.clauses_json || '[]'),
+    }
+  })
+
+  return ok(data)
+}
+
+/* ─── Service Categories (Settings → Body Configuration) ─────────────
  * Main service-line categories offered on Step 2 (Services) of the proposal
  * wizard. Fully staff-editable (add/rename/reorder/deactivate/delete) —
  * `code` is a stable identifier also stored on proposal_services.code, so

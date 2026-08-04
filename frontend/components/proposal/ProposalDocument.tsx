@@ -72,7 +72,8 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         </div>
         <div className="doc-re">RE: {model.title}</div>
         <p>Dear {model.contactName || '[Client Name]'},</p>
-        <p>{model.introMessage}</p>
+        {/* introMessage is authored via TinyMCE (wizard Step 5) — always HTML */}
+        <div className="doc-rich-text" dangerouslySetInnerHTML={{ __html: model.introMessage }} />
 
         <div className="doc-toc">
           {tocItems.map(item => (
@@ -191,10 +192,16 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
       {/* Quote Approval */}
       <div className="doc-page" id="doc-section-approval">
         <h3 className="doc-heading">Quote Approval</h3>
-        <p>
-          Should the terms of this proposal be acceptable, please sign below and return the applicable service
-          agreement. This proposal remains valid for {model.validityDays} days from the date of issue.
-        </p>
+        {model.signatureMessage?.trim() ? (
+          // Staff-authored rich-text message (TinyMCE, wizard Signature step)
+          // takes the place of the default sentence when one has been set.
+          <div className="doc-signature-message" dangerouslySetInnerHTML={{ __html: model.signatureMessage }} />
+        ) : (
+          <p>
+            Should the terms of this proposal be acceptable, please sign below and return the applicable service
+            agreement. This proposal remains valid for {model.validityDays} days from the date of issue.
+          </p>
+        )}
         {!model.signatureRequired ? (
           <p className="doc-empty">No signature block requested for this proposal.</p>
         ) : (
@@ -293,6 +300,9 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         .doc-fee-total { text-align: right; margin-top: 10px; font-weight: 700; color: var(--nv-blue-slate); }
         .doc-footnotes { margin-top: 12px; padding-left: 18px; font-size: 11px; color: var(--nv-text-muted); }
 
+        .doc-signature-message :global(p), .doc-rich-text :global(p) { margin: 0 0 10px; }
+        .doc-signature-message :global(ul), .doc-signature-message :global(ol),
+        .doc-rich-text :global(ul), .doc-rich-text :global(ol) { margin: 0 0 10px 20px; }
         .doc-signature { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
         .doc-signature__mark { border-bottom: 1.5px solid var(--nv-border); padding-bottom: 8px; min-height: 60px; display: flex; align-items: flex-end; }
         .doc-signature__script { font-family: var(--font-signature); font-size: 36px; color: var(--nv-text-heading); }

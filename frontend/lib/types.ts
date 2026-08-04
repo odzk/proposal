@@ -2,7 +2,7 @@
 
 export type ProposalStatus = 'draft' | 'generated' | 'sent' | 'signed' | 'expired' | 'fully_signed'
 // Was a fixed 4-value union ('RM'|'SM'|'MK'|'CR'). Widened to `string` because
-// service-line categories are now managed from Settings → Service Lines
+// service-line categories are now managed from Settings → Body Configuration
 // (fully staff-editable — add/rename/delete), so the set of valid codes is no
 // longer known at compile time. String-literal codes like 'RM' still satisfy
 // this type unchanged; see ServiceCategory below and lib/serviceCatalog.ts's
@@ -152,7 +152,7 @@ export interface RegionSettings {
 }
 
 // One default Scope-of-Work bullet within a section, as configured on a
-// ServiceCategory in Settings → Service Lines. Mirrors the worker's
+// ServiceCategory in Settings → Body Configuration. Mirrors the worker's
 // service_categories.default_scope_json column shape.
 export interface ServiceCategoryScopeItem {
   id:   string
@@ -160,7 +160,7 @@ export interface ServiceCategoryScopeItem {
 }
 
 // One default Scope-of-Work section (heading + bullets) as configured on a
-// ServiceCategory in Settings → Service Lines. Fully staff-editable — add/
+// ServiceCategory in Settings → Body Configuration. Fully staff-editable — add/
 // edit/remove/reorder both sections and items within a section.
 export interface ServiceCategoryScopeSection {
   id:      string
@@ -168,7 +168,7 @@ export interface ServiceCategoryScopeSection {
   items:   ServiceCategoryScopeItem[]
 }
 
-// A main service-line category managed from Settings → Service Lines — the
+// A main service-line category managed from Settings → Body Configuration — the
 // list Step 2 (Services) of the proposal wizard offers to select from. Fully
 // staff-editable (add/rename/reorder/deactivate/delete); `code` is stable
 // once created (stored on proposal_services.code) even though the category
@@ -199,6 +199,11 @@ export interface ProposalTerms {
   signatoryName:     string
   signatoryTitle:    string
   signatureDataUrl:  string
+  // Optional rich-text (HTML, authored via TinyMCE) message shown to the
+  // client on the wizard's Signature step (Step 8) — rendered above the
+  // signature block on the client-facing document, in place of the default
+  // "Should the terms of this proposal be acceptable…" sentence when present.
+  signatureMessage:  string
 }
 
 // Proposal generator wizard state (nested per-step structure)
@@ -243,6 +248,9 @@ export interface ProposalDraft {
     staffId: string
     accountManagerId: string
     message: string
+    // Comma-separated additional recipients on the proposal-sent email.
+    cc:  string
+    bcc: string
   }
 
   // Step 6 — Cover
@@ -250,10 +258,14 @@ export interface ProposalDraft {
     coverUrl: string
   }
 
-  // Step 7 — Terms & Conditions
+  // Step 7 — Terms & Conditions, and Step 8 — Signature. Both steps share
+  // this same `terms` slice (clauses/validityDays render on Step 7;
+  // signatureRequired/signatureMethod/signatoryName/signatoryTitle/
+  // signatureDataUrl/signatureMessage render on Step 8) since the worker
+  // persists them together as a single proposal_terms row.
   terms: ProposalTerms
 
-  // Step 8 — Preview
+  // Step 9 — Preview
   preview: {
     recipientEmail: string
   }
@@ -273,6 +285,18 @@ export interface DashboardStats {
   avgResponseDays:     number
   pendingSignature:    number
   totalRevenuePending: number
+}
+
+// A file attached to the proposal-sent email (wizard Step 5 — Sender),
+// already uploaded to the worker (bytes live in R2; see routes/proposals.ts
+// uploadAttachment/deleteAttachment). Distinct from a locally-picked File
+// that hasn't been uploaded yet — those are held as plain File objects in
+// the wizard's local component state, not in this shape or in ProposalDraft.
+export interface ProposalAttachment {
+  id:           string
+  filename:     string
+  contentType?: string | null
+  sizeBytes:    number
 }
 
 export interface ApiResponse<T = unknown> {

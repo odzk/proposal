@@ -4,15 +4,15 @@ import { useEffect, useState } from 'react'
 import type { ServiceCategory, ServiceCategoryScopeSection } from '@/lib/types'
 import { generateRowId } from '@/lib/serviceCatalog'
 
-// Service Lines — the main service-line categories (Sales, Marketing, Revenue
-// Management, Central Reservations, Systems, Advisory, and any staff-added
-// custom category) offered on Step 2 (Services) of the proposal wizard.
-// Fully staff-editable: rename, reorder, deactivate, delete, or add new ones.
-// `code` is a stable identifier (also stored on proposal_services.code) set
-// once at creation and not editable afterwards — deleting or renaming a
-// category later does not affect proposals that already used its code; see
-// worker/src/routes/settings.ts.
-export default function ServiceLinesPage() {
+// Body Configuration — the main service-line categories (Sales, Marketing,
+// Revenue Management, Central Reservations, Systems, Advisory, and any
+// staff-added custom category) offered on Step 2 (Services) of the proposal
+// wizard. Fully staff-editable: rename, reorder, deactivate, delete, or add
+// new ones. `code` is a stable identifier (also stored on
+// proposal_services.code) set once at creation and not editable afterwards
+// — deleting or renaming a category later does not affect proposals that
+// already used its code; see worker/src/routes/settings.ts.
+export default function BodyConfigurationPage() {
   const [categories, setCategories] = useState<ServiceCategory[] | null>(null)
   const [loading, setLoading]       = useState(true)
   const [loadError, setLoadError]   = useState('')
@@ -238,8 +238,8 @@ export default function ServiceLinesPage() {
   }
 
   return (
-    <div className="nv-card sl-card">
-      <h2 className="sync-card__title">Service Lines</h2>
+    <div className="nv-card bc-card">
+      <h2 className="sync-card__title">Body Configuration</h2>
       <p className="sync-card__desc">
         Configure the main service-line categories offered on Step 2 (Services) when creating a new
         proposal. Rename, reorder, deactivate, or delete a category — deactivated categories stop
@@ -250,28 +250,28 @@ export default function ServiceLinesPage() {
       {loadError && <div className="sync-card__result sync-card__result--error">{loadError}</div>}
 
       {categories && (
-        <div className="sl-list">
-          {categories.length === 0 && <p className="sl-empty">No service lines configured yet.</p>}
+        <div className="bc-list">
+          {categories.length === 0 && <p className="bc-empty">No service lines configured yet.</p>}
           {categories.map((cat, i) => (
-            <div key={cat.code} className="sl-row-group">
-              <div className={`sl-row ${cat.active ? '' : 'sl-row--inactive'}`}>
-                <div className="sl-row__order">
-                  <button type="button" className="sl-order-btn" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">▲</button>
-                  <button type="button" className="sl-order-btn" disabled={i === categories.length - 1} onClick={() => move(i, 1)} aria-label="Move down">▼</button>
+            <div key={cat.code} className="bc-row-group">
+              <div className={`bc-row ${cat.active ? '' : 'bc-row--inactive'}`}>
+                <div className="bc-row__order">
+                  <button type="button" className="bc-order-btn" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Move up">▲</button>
+                  <button type="button" className="bc-order-btn" disabled={i === categories.length - 1} onClick={() => move(i, 1)} aria-label="Move down">▼</button>
                 </div>
 
-                <span className="sl-row__code" title="Stable code — used internally, not editable">{cat.code}</span>
+                <span className="bc-row__code" title="Stable code — used internally, not editable">{cat.code}</span>
 
-                <div className="sl-row__fields">
+                <div className="bc-row__fields">
                   <input
-                    className="nv-input sl-label-input"
+                    className="nv-input bc-label-input"
                     value={cat.label}
                     onChange={e => updateLocal(cat.code, { label: e.target.value })}
                     onBlur={e => saveRow(cat.code, { label: e.target.value })}
                     placeholder="Label"
                   />
                   <input
-                    className="nv-input sl-desc-input"
+                    className="nv-input bc-desc-input"
                     value={cat.description}
                     onChange={e => updateLocal(cat.code, { description: e.target.value })}
                     onBlur={e => saveRow(cat.code, { description: e.target.value })}
@@ -279,7 +279,7 @@ export default function ServiceLinesPage() {
                   />
                 </div>
 
-                <label className="sl-active-toggle">
+                <label className="bc-active-toggle">
                   <input type="checkbox" checked={cat.active} onChange={() => toggleActive(cat)} />
                   <span>Active</span>
                 </label>
@@ -289,12 +289,12 @@ export default function ServiceLinesPage() {
                   {expandedCode === cat.code ? 'Hide Scope of Work' : `Scope of Work (${cat.defaultScope?.length || 0})`}
                 </button>
 
-                <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm sl-delete"
+                <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm bc-delete"
                   onClick={() => deleteCategory(cat)} disabled={savingCode === cat.code}>
                   Delete
                 </button>
 
-                {rowError[cat.code] && <div className="sl-row__error">{rowError[cat.code]}</div>}
+                {rowError[cat.code] && <div className="bc-row__error">{rowError[cat.code]}</div>}
               </div>
 
               {expandedCode === cat.code && (
@@ -313,9 +313,9 @@ export default function ServiceLinesPage() {
                     <div key={section.id} className="scope-section">
                       <div className="scope-section__header">
                         <div className="scope-order">
-                          <button type="button" className="sl-order-btn" disabled={si === 0}
+                          <button type="button" className="bc-order-btn" disabled={si === 0}
                             onClick={() => moveScopeSection(si, -1)} aria-label="Move section up">▲</button>
-                          <button type="button" className="sl-order-btn" disabled={si === scopeDraft.length - 1}
+                          <button type="button" className="bc-order-btn" disabled={si === scopeDraft.length - 1}
                             onClick={() => moveScopeSection(si, 1)} aria-label="Move section down">▼</button>
                         </div>
                         <input
@@ -324,7 +324,7 @@ export default function ServiceLinesPage() {
                           onChange={e => updateScopeSectionHeading(section.id, e.target.value)}
                           placeholder="Section heading — e.g. Revenue Management Services"
                         />
-                        <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm sl-delete"
+                        <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm bc-delete"
                           onClick={() => removeScopeSection(section.id)}>
                           Remove Section
                         </button>
@@ -334,9 +334,9 @@ export default function ServiceLinesPage() {
                         {section.items.map((item, ii) => (
                           <div key={item.id} className="scope-item">
                             <div className="scope-order">
-                              <button type="button" className="sl-order-btn" disabled={ii === 0}
+                              <button type="button" className="bc-order-btn" disabled={ii === 0}
                                 onClick={() => moveScopeItem(section.id, ii, -1)} aria-label="Move bullet up">▲</button>
-                              <button type="button" className="sl-order-btn" disabled={ii === section.items.length - 1}
+                              <button type="button" className="bc-order-btn" disabled={ii === section.items.length - 1}
                                 onClick={() => moveScopeItem(section.id, ii, 1)} aria-label="Move bullet down">▼</button>
                             </div>
                             <textarea
@@ -346,7 +346,7 @@ export default function ServiceLinesPage() {
                               placeholder="Bullet text"
                               rows={2}
                             />
-                            <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm sl-delete"
+                            <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm bc-delete"
                               onClick={() => removeScopeItem(section.id, item.id)}>
                               Remove
                             </button>
@@ -370,7 +370,7 @@ export default function ServiceLinesPage() {
                     </button>
                     {scopeSaved && <span className="scope-panel__saved">Saved ✓</span>}
                   </div>
-                  {scopeError && <div className="sl-row__error" style={{ position: 'static' }}>{scopeError}</div>}
+                  {scopeError && <div className="bc-row__error" style={{ position: 'static' }}>{scopeError}</div>}
                 </div>
               )}
             </div>
@@ -378,8 +378,8 @@ export default function ServiceLinesPage() {
         </div>
       )}
 
-      <h3 className="sl-add-title">Add Service Line</h3>
-      <div className="sl-add-form">
+      <h3 className="bc-add-title">Add Service Line</h3>
+      <div className="bc-add-form">
         <input className="nv-input" value={newLabel} onChange={e => setNewLabel(e.target.value)}
           placeholder="Label — e.g. Consulting" />
         <input className="nv-input" value={newCode} onChange={e => setNewCode(e.target.value)}
@@ -393,7 +393,7 @@ export default function ServiceLinesPage() {
       {addError && <div className="sync-card__result sync-card__result--error">{addError}</div>}
 
       <style jsx>{`
-        .sl-card {
+        .bc-card {
           max-width: 760px;
           width: 100%;
           padding: 28px;
@@ -401,10 +401,10 @@ export default function ServiceLinesPage() {
           flex-direction: column;
           gap: 6px;
         }
-        .sl-list { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 8px; }
-        .sl-empty { font-size: 13px; color: var(--nv-text-muted); font-style: italic; }
-        .sl-row-group { display: flex; flex-direction: column; gap: 0; }
-        .sl-row {
+        .bc-list { display: flex; flex-direction: column; gap: 10px; margin: 16px 0 8px; }
+        .bc-empty { font-size: 13px; color: var(--nv-text-muted); font-style: italic; }
+        .bc-row-group { display: flex; flex-direction: column; gap: 0; }
+        .bc-row {
           display: flex;
           align-items: flex-start;
           gap: 10px;
@@ -414,14 +414,14 @@ export default function ServiceLinesPage() {
           background: rgba(40,104,127,0.03);
           position: relative;
         }
-        .sl-row--inactive { opacity: 0.55; }
-        .sl-row__order { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
-        .sl-order-btn {
+        .bc-row--inactive { opacity: 0.55; }
+        .bc-row__order { display: flex; flex-direction: column; gap: 2px; flex-shrink: 0; }
+        .bc-order-btn {
           width: 22px; height: 18px; border: 1px solid var(--nv-border); background: none;
           border-radius: 4px; font-size: 9px; cursor: pointer; line-height: 1;
         }
-        .sl-order-btn:disabled { opacity: 0.3; cursor: default; }
-        .sl-row__code {
+        .bc-order-btn:disabled { opacity: 0.3; cursor: default; }
+        .bc-row__code {
           flex-shrink: 0;
           background: var(--nv-blue-slate);
           color: white;
@@ -432,28 +432,28 @@ export default function ServiceLinesPage() {
           letter-spacing: 0.04em;
           align-self: center;
         }
-        .sl-row__fields { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-        .sl-label-input { font-weight: 600; }
-        .sl-desc-input { font-size: 12.5px; }
-        .sl-active-toggle {
+        .bc-row__fields { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+        .bc-label-input { font-weight: 600; }
+        .bc-desc-input { font-size: 12.5px; }
+        .bc-active-toggle {
           display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nv-text-muted);
           flex-shrink: 0; align-self: center; white-space: nowrap;
         }
-        .sl-delete { align-self: center; color: var(--nv-error); flex-shrink: 0; }
-        .sl-row__error {
+        .bc-delete { align-self: center; color: var(--nv-error); flex-shrink: 0; }
+        .bc-row__error {
           position: absolute; bottom: -18px; left: 12px; font-size: 11px; color: var(--nv-error);
         }
-        .sl-add-title {
+        .bc-add-title {
           font-family: var(--font-comfortaa); font-size: 14px; font-weight: 700;
           color: var(--nv-text-heading); margin: 12px 0 4px;
         }
-        .sl-add-form {
+        .bc-add-form {
           display: grid;
           grid-template-columns: 1fr 1fr 1fr auto;
           gap: 8px;
           align-items: center;
         }
-        @media (max-width: 760px) { .sl-add-form { grid-template-columns: 1fr; } }
+        @media (max-width: 760px) { .bc-add-form { grid-template-columns: 1fr; } }
 
         .scope-panel {
           border: 1px solid var(--nv-border-hair);

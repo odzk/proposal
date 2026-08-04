@@ -17,10 +17,12 @@ import {
   getPublicProposal,
   signProposal,
   generateEmailTemplate,
+  uploadAttachment,
+  deleteAttachment,
 } from './routes/proposals'
 import { syncM365Staff } from './routes/staff'
 import {
-  getRegionSettings, updateRegionSettings,
+  getRegionSettings, getEntitySettings, updateEntitySettings,
   getServiceCategories, createServiceCategory, updateServiceCategory,
   deleteServiceCategory, reorderServiceCategories,
 } from './routes/settings'
@@ -194,15 +196,22 @@ async function route(
     return syncM365Staff(request, env, session)
   }
 
-  // Region Settings (Settings → Region Settings) — per-region (au/uk/ie)
-  // Nuvho address, legal footer, currency, and default T&Cs clauses, applied
-  // onto the proposal wizard's Hotel Details step when a region is selected.
+  // Region Settings — LEGACY read-only feed for the proposal wizard's Hotel
+  // Details step ONLY (see routes/settings.ts getRegionSettings for why this
+  // is kept); no longer editable via the UI, so there is no PUT here anymore.
   if (path === '/settings/regions' && method === 'GET') {
     return getRegionSettings(env, session)
   }
-  const regionSettingsMatch = path.match(/^\/settings\/regions\/([a-z]{2})$/)
-  if (regionSettingsMatch && method === 'PUT') {
-    return updateRegionSettings(regionSettingsMatch[1], request, env, session)
+
+  // Entities (Settings → Entities) — every legal entity from the Nuvho
+  // Master Registry, merged with this app's own address/about/footer/
+  // currency/T&Cs settings per entity_code.
+  if (path === '/settings/entities' && method === 'GET') {
+    return getEntitySettings(env, session)
+  }
+  const entitySettingsMatch = path.match(/^\/settings\/entities\/([A-Za-z0-9_-]+)$/)
+  if (entitySettingsMatch && method === 'PUT') {
+    return updateEntitySettings(entitySettingsMatch[1], request, env, session)
   }
 
   // Service Categories (Settings → Service Lines) — main service-line
@@ -255,6 +264,17 @@ async function route(
   const sendMatch = path.match(/^\/proposals\/([A-Z0-9]+)\/send$/)
   if (sendMatch && method === 'POST') {
     return sendProposal(sendMatch[1], env, session)
+  }
+
+  // Attachments (wizard Step 5 — Sender) — upload a file to an existing
+  // proposal (multipart/form-data, field name "file")
+  const attachmentsMatch = path.match(/^\/proposals\/([A-Z0-9]+)\/attachments$/)
+  if (attachmentsMatch && method === 'POST') {
+    return uploadAttachment(attachmentsMatch[1], request, env, session)
+  }
+  const attachmentDetailMatch = path.match(/^\/proposals\/([A-Z0-9]+)\/attachments\/([A-Za-z0-9_-]+)$/)
+  if (attachmentDetailMatch && method === 'DELETE') {
+    return deleteAttachment(attachmentDetailMatch[1], attachmentDetailMatch[2], env, session)
   }
 
   // Audit log for a proposal

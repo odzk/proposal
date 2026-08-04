@@ -12,6 +12,7 @@
   "dependencies": {
     "@azure/msal-browser": "^3.14.0",
     "@azure/msal-react": "^2.1.0",
+    "@tinymce/tinymce-react": "^5.1.1",
     "clsx": "^2.1.1",
     "date-fns": "^3.6.0",
     "docx": "^9.7.1",
@@ -24,6 +25,7 @@
     "react-hook-form": "^7.52.1",
     "sonner": "^1.5.0",
     "tailwind-merge": "^2.3.0",
+    "tinymce": "^7.6.0",
     "zustand": "^4.5.4"
   },
   "devDependencies": {

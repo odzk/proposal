@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 
@@ -14,11 +14,45 @@ const STATUS_CLASSES: Record<string, string> = {
   pending: 'nv-badge--pending',
 }
 
+// Table columns — `key` is the field on a proposal row to sort by when its
+// header is clicked (matches the raw column names GET /proposals returns —
+// see worker/src/routes/proposals.ts listProposals). A null key means the
+// column isn't sortable: Value has no real key here since this list doesn't
+// fetch a monthly-value total per row (it always renders "—"), and the
+// trailing action column has no data of its own.
+const COLUMNS: { label: string; key: string | null }[] = [
+  { label: 'ID',       key: 'np_id' },
+  { label: 'Hotel',    key: 'hotel_name' },
+  { label: 'Contact',  key: 'contact_name' },
+  { label: 'Services', key: 'service_codes' },
+  { label: 'Value',    key: null },
+  { label: 'Sent',     key: 'sent_at' },
+  { label: 'Status',   key: 'status' },
+  { label: '',         key: null },
+]
+
+// Generic ascending comparator — nulls/blanks always sort last regardless of
+// direction (handled by the caller flipping the whole result, not this
+// function), strings compare case-insensitively via localeCompare, and
+// everything else (the sent_at/created_at ISO datetime strings this API
+// returns) compares fine as plain strings without needing Date parsing.
+function compareValues(a: unknown, b: unknown): number {
+  const aEmpty = a === null || a === undefined || a === ''
+  const bEmpty = b === null || b === undefined || b === ''
+  if (aEmpty && bEmpty) return 0
+  if (aEmpty) return 1
+  if (bEmpty) return -1
+  if (typeof a === 'string' && typeof b === 'string') return a.localeCompare(b)
+  return a < (b as any) ? -1 : a > (b as any) ? 1 : 0
+}
+
 export default function ProposalsPage() {
   const router = useRouter()
   const [proposals, setProposals] = useState<any[]>([])
   const [loading,   setLoading]   = useState(true)
   const [filter,    setFilter]    = useState('')
+  const [sortKey,   setSortKey]   = useState<string | null>(null)
+  const [sortDir,   setSortDir]   = useState<'asc' | 'desc'>('asc')
 
   useEffect(() => {
     const url = filter
@@ -30,16 +64,39 @@ export default function ProposalsPage() {
       .finally(() => setLoading(false))
   }, [filter])
 
+  // Default (no column clicked yet) keeps the API's own order — newest
+  // first (GET /proposals orders by created_at DESC) — otherwise sorts a
+  // copy of the list by the clicked column, nulls/blanks always last.
+  const sortedProposals = useMemo(() => {
+    if (!sortKey) return proposals
+    const dir = sortDir === 'asc' ? 1 : -1
+    return [...proposals].sort((a, b) => {
+      const av = sortKey === 'np_id' ? (a.np_id || a.id) : a[sortKey]
+      const bv = sortKey === 'np_id' ? (b.np_id || b.id) : b[sortKey]
+      return compareValues(av, bv) * dir
+    })
+  }, [proposals, sortKey, sortDir])
+
+  function handleSort(key: string | null) {
+    if (!key) return
+    if (sortKey === key) {
+      setSortDir(d => (d === 'asc' ? 'desc' : 'asc'))
+    } else {
+      setSortKey(key)
+      setSortDir('asc')
+    }
+  }
+
   return (
     <div style={{ padding: '32px' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between',
                     alignItems: 'center', marginBottom: 28 }}>
         <h1 style={{ fontSize: 24, fontFamily: 'var(--nv-font-display)',
                      fontWeight: 700, color: 'var(--nv-text-heading)', margin: 0 }}>
-          Proposals
+          Documents
         </h1>
         <Link href="/proposals/new" className="nv-btn nv-btn--solid nv-btn--md">
-          + New Proposal
+          + New Document
         </Link>
       </div>
 
@@ -67,12 +124,12 @@ export default function ProposalsPage() {
         <div style={{ display: 'flex', justifyContent: 'center', padding: 64 }}>
           <div className="nv-spinner" />
         </div>
-      ) : proposals.length === 0 ? (
+      ) : sortedProposals.length === 0 ? (
         <div style={{ textAlign: 'center', padding: '64px 0', color: 'var(--nv-text-muted)' }}>
-          <p style={{ fontSize: 16 }}>No proposals found</p>
+          <p style={{ fontSize: 16 }}>No documents found</p>
           <Link href="/proposals/new" className="nv-btn nv-btn--solid nv-btn--md"
                 style={{ display: 'inline-block', marginTop: 16 }}>
-            Create your first proposal
+            Create your first document
           </Link>
         </div>
       ) : (
@@ -80,18 +137,27 @@ export default function ProposalsPage() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
             <thead>
               <tr style={{ background: 'var(--nv-platinum)' }}>
-                {['ID', 'Hotel', 'Contact', 'Services', 'Value', 'Sent', 'Status', ''].map(h => (
-                  <th key={h} style={{ padding: '12px 16px', textAlign: 'left',
-                                       fontSize: 12, fontWeight: 700,
-                                       color: 'var(--nv-text-muted)',
-                                       textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                    {h}
+                {COLUMNS.map(col => (
+                  <th key={col.label || 'actions'}
+                      onClick={() => handleSort(col.key)}
+                      style={{ padding: '12px 16px', textAlign: 'left',
+                               fontSize: 12, fontWeight: 700,
+                               color: 'var(--nv-text-muted)',
+                               textTransform: 'uppercase', letterSpacing: '0.06em',
+                               cursor: col.key ? 'pointer' : 'default',
+                               userSelect: 'none', whiteSpace: 'nowrap' }}>
+                    {col.label}
+                    {col.key && (
+                      <span style={{ marginLeft: 4, opacity: sortKey === col.key ? 1 : 0.25 }}>
+                        {sortKey === col.key ? (sortDir === 'asc' ? '▲' : '▼') : '▲'}
+                      </span>
+                    )}
                   </th>
                 ))}
               </tr>
             </thead>
             <tbody>
-              {proposals.map((p: any) => (
+              {sortedProposals.map((p: any) => (
                 <tr key={p.id}
                     style={{ borderBottom: '1px solid var(--nv-border-hair)',
                              transition: 'background 150ms', cursor: 'pointer' }}

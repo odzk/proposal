@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import type {
   ProposalDraft, ServiceCode, Region, DraftServiceLine, ScopeItem, FeeRow,
   PricingFootnote, TermsClause, FeeType, RegionSettings, ServiceCategory,
+  ProposalAttachment,
 } from '@/lib/types'
 import {
   getServiceLabel, getServiceColor, FEE_TYPES, REGION_META, initScopeItems, initFeeRows,
@@ -13,6 +14,7 @@ import {
 import { buildDocModelFromDraft, downloadBlob } from '@/lib/documentModel'
 import { ProposalDocument } from '@/components/proposal/ProposalDocument'
 import { SignaturePad } from '@/components/proposal/SignaturePad'
+import { RichTextEditor } from '@/components/proposal/RichTextEditor'
 import { buildDocxFile } from '@/lib/exportDocx'
 import { setNavigationGuard } from '@/lib/navigationGuard'
 
@@ -24,8 +26,14 @@ const STEPS = [
   { id: 5, label: 'Sender'         },
   { id: 6, label: 'Cover Image'    },
   { id: 7, label: 'Terms'          },
-  { id: 8, label: 'Preview & Send' },
+  { id: 8, label: 'Signature'      },
+  { id: 9, label: 'Preview & Send' },
 ]
+
+// Steps that offer a "Skip" control beside Continue — Services/Scope/Pricing
+// detail and the Terms & Conditions review are all optional for proposals
+// that don't need them; Skip advances without running that step's validation.
+const SKIPPABLE_STEPS = [2, 3, 4, 7]
 
 const EMPTY_DRAFT: ProposalDraft = {
   step: 1,
@@ -36,7 +44,7 @@ const EMPTY_DRAFT: ProposalDraft = {
   },
   regionSettings: { address: '', companyName: '', aboutNuvho: '', footerText: '', currency: REGION_META.au.currency },
   services:     [],
-  sender:       { staffId: '', accountManagerId: '', message: '' },
+  sender:       { staffId: '', accountManagerId: '', message: '', cc: '', bcc: '' },
   cover:        { coverUrl: '' },
   terms:        initTerms('au'),
   preview:      { recipientEmail: '' },
@@ -54,6 +62,17 @@ export default function NewProposalPage() {
   const [staffLoading, setStaffLoading] = useState(true)
   const [staffError, setStaffError]     = useState('')
   const [loadingExisting, setLoadingExisting] = useState(!!editId)
+
+  // Attachments (Step 5 — Sender). Split into two lists because a brand-new
+  // proposal has no id to upload against yet: newly-picked files sit in
+  // pendingAttachments (plain File objects, never JSON-serialized) until the
+  // next Save Draft / Generate & Send gives us a proposal id, at which point
+  // uploadPendingAttachments() sends them and clears the list. In edit mode,
+  // existingAttachments is pre-loaded from the fetched proposal below and its
+  // Remove button deletes immediately, since the id already exists.
+  const [pendingAttachments, setPendingAttachments]   = useState<File[]>([])
+  const [existingAttachments, setExistingAttachments] = useState<ProposalAttachment[]>([])
+  const [attachmentError, setAttachmentError]         = useState('')
 
   // Unsaved-changes guard — lets AppShell warn before navigating away from
   // an in-progress wizard (new or edit). baselineRef captures the draft's
@@ -205,8 +224,11 @@ export default function NewProposalPage() {
             staffId: p.sender_staff_id || '',
             accountManagerId: p.account_manager_stf_id || '',
             message: p.sender_message || '',
+            cc:  p.sender_cc || '',
+            bcc: p.sender_bcc || '',
           },
           cover:   { coverUrl: p.cover_url || '' },
+          // (attachments handled separately — see setExistingAttachments below)
           // Spread over initTerms() defaults, not just `p.terms || initTerms(...)`,
           // so proposals saved before signatureMethod/signatureDataUrl existed
           // (or before the Worker migration adding those D1 columns has run)
@@ -214,6 +236,7 @@ export default function NewProposalPage() {
           terms: { ...initTerms((p.region || 'au') as Region), ...(p.terms || {}) },
           preview: { recipientEmail: p.contact_email || '' },
         })
+        setExistingAttachments(Array.isArray(p.attachments) ? p.attachments : [])
       } catch (e: any) {
         if (!cancelled) setErrors({ submit: e.message || 'Failed to load proposal for editing' })
       } finally {
@@ -289,6 +312,13 @@ export default function NewProposalPage() {
     setErrors({})
     setDraft(d => ({ ...d, step: Math.max(1, d.step - 1) }))
   }
+  // Advances a step without running validateStep — used by the Skip control
+  // on steps where filling in that step's content is optional (see
+  // SKIPPABLE_STEPS). Deliberately does not clear/reset the step's own data.
+  function goSkip() {
+    setErrors({})
+    setDraft(d => ({ ...d, step: Math.min(STEPS.length, d.step + 1) }))
+  }
 
   async function createDraftProposal(): Promise<string> {
     if (editId) {
@@ -312,6 +342,8 @@ export default function NewProposalPage() {
           sender_staff_id:  draft.sender.staffId,
           account_manager_stf_id: draft.sender.accountManagerId || null,
           sender_message:   draft.sender.message,
+          sender_cc:        draft.sender.cc,
+          sender_bcc:       draft.sender.bcc,
           cover_url:        draft.cover.coverUrl,
           hubspot_deal_id:  draft.hotel.hubspotDealId,
           services:         draft.services,
@@ -334,10 +366,74 @@ export default function NewProposalPage() {
     return data.data.id as string
   }
 
+  // Attachments (Step 5 — Sender) — see the pendingAttachments/
+  // existingAttachments state comment above for why uploads are deferred.
+  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024   // keep in sync with worker's MAX_ATTACHMENT_BYTES
+  const MAX_ATTACHMENTS      = 5                  // keep in sync with worker's MAX_ATTACHMENTS
+
+  function handleAddAttachments(files: FileList | null) {
+    if (!files || !files.length) return
+    setAttachmentError('')
+    const totalExisting = existingAttachments.length + pendingAttachments.length
+    const accepted: File[] = []
+    for (const file of Array.from(files)) {
+      if (totalExisting + accepted.length >= MAX_ATTACHMENTS) {
+        setAttachmentError(`Maximum ${MAX_ATTACHMENTS} attachments per proposal`)
+        break
+      }
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        setAttachmentError(`"${file.name}" is too large — ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB limit per file`)
+        continue
+      }
+      accepted.push(file)
+    }
+    if (accepted.length) setPendingAttachments(prev => [...prev, ...accepted])
+  }
+
+  function handleRemovePendingAttachment(index: number) {
+    setPendingAttachments(prev => prev.filter((_, i) => i !== index))
+  }
+
+  async function handleRemoveExistingAttachment(attachmentId: string) {
+    if (!editId) return
+    try {
+      await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${editId}/attachments/${attachmentId}`, {
+        method: 'DELETE',
+        credentials: 'include',
+      })
+    } finally {
+      // Drop it from the list regardless — a 404 (already gone) shouldn't
+      // leave a stale row stuck in the UI.
+      setExistingAttachments(prev => prev.filter(a => a.id !== attachmentId))
+    }
+  }
+
+  // Uploads every not-yet-uploaded file once a proposal id exists (called
+  // from handleSaveDraft/handleSubmit right after createDraftProposal()).
+  // Best-effort per file — one failed upload surfaces an error but doesn't
+  // block the save/send that already succeeded.
+  async function uploadPendingAttachments(proposalId: string) {
+    for (const file of pendingAttachments) {
+      const formData = new FormData()
+      formData.append('file', file, file.name)
+      const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${proposalId}/attachments`, {
+        method: 'POST',
+        credentials: 'include',
+        body: formData,
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        throw new Error(data.error || `Failed to upload attachment "${file.name}"`)
+      }
+    }
+    setPendingAttachments([])
+  }
+
   async function handleSaveDraft() {
     setSavingDraft(true)
     try {
       const id = await createDraftProposal()
+      await uploadPendingAttachments(id)
       router.push(`/proposals/${id}`)
     } catch (err: any) {
       setErrors({ submit: err.message })
@@ -350,6 +446,7 @@ export default function NewProposalPage() {
     setSaving(true)
     try {
       const id = await createDraftProposal()
+      await uploadPendingAttachments(id)
       const sendRes = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${id}/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -425,6 +522,11 @@ export default function NewProposalPage() {
             <Step5Sender
               draft={draft} setDraft={setDraft} errors={errors}
               staff={staff} staffLoading={staffLoading} staffError={staffError}
+              pendingAttachments={pendingAttachments} existingAttachments={existingAttachments}
+              attachmentError={attachmentError}
+              onAddAttachments={handleAddAttachments}
+              onRemovePendingAttachment={handleRemovePendingAttachment}
+              onRemoveExistingAttachment={handleRemoveExistingAttachment}
             />
           )}
           {step === 6 && (
@@ -434,7 +536,10 @@ export default function NewProposalPage() {
             <Step7Terms draft={draft} setDraft={setDraft} errors={errors} />
           )}
           {step === 8 && (
-            <Step8Preview draft={draft} setDraft={setDraft} errors={errors} staff={staff} />
+            <Step8Signature draft={draft} setDraft={setDraft} errors={errors} />
+          )}
+          {step === 9 && (
+            <Step9Preview draft={draft} setDraft={setDraft} errors={errors} staff={staff} />
           )}
 
           {errors.submit && (
@@ -449,9 +554,16 @@ export default function NewProposalPage() {
                 </button>
               : <div />}
             {step < STEPS.length
-              ? <button className="nv-btn nv-btn--solid nv-btn--md" onClick={goNext}>
-                  Continue →
-                </button>
+              ? <div style={{ display: 'flex', gap: 12 }}>
+                  {SKIPPABLE_STEPS.includes(step) && (
+                    <button className="nv-btn nv-btn--outlined nv-btn--md" onClick={goSkip}>
+                      Skip
+                    </button>
+                  )}
+                  <button className="nv-btn nv-btn--solid nv-btn--md" onClick={goNext}>
+                    Continue →
+                  </button>
+                </div>
               : <div style={{ display: 'flex', gap: 12 }}>
                   <button
                     className="nv-btn nv-btn--outlined nv-btn--md"
@@ -628,6 +740,11 @@ function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSetting
   const [regResults, setRegResults] = useState<RegistryHotelGroupSummary[]>([])
   const [hsResults, setHsResults]   = useState<HubspotSearchResult[]>([])
   const [hgResolveError, setHgResolveError] = useState('')
+
+  // "Confidential" toggle at the top of Hotel Details — cosmetic only for
+  // now, per request: just the check mark, not yet wired to the draft, the
+  // API, or the generated document.
+  const [confidential, setConfidential] = useState(false)
 
   // Single search box — replaces the old separate "HubSpot" box and "Hotel
   // Group" box. Queries the registry typeahead (scoped to the chosen region)
@@ -1069,8 +1186,29 @@ function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSetting
 
   return (
     <div className="step-content">
-      <h2 className="step-title">Hotel Details</h2>
-      <p className="step-desc">Enter the hotel and primary contact information.</p>
+      <div className="step-header-row">
+        <div>
+          <h2 className="step-title">Hotel Details</h2>
+          <p className="step-desc">Enter the hotel and primary contact information.</p>
+        </div>
+        <button
+          type="button"
+          className={`confidential-toggle ${confidential ? 'confidential-toggle--active' : ''}`}
+          onClick={() => setConfidential(c => !c)}
+          aria-pressed={confidential}
+        >
+          <span className="confidential-toggle__check">
+            {confidential && (
+              <svg width="9" height="9" viewBox="0 0 448 512" fill="white">
+                {/* nuvho-brand icon: check (duotone-thin) — same mark used by the
+                    step indicator's completed-step state above */}
+                <path d="M444.7 65.5c3.6 2.6 4.3 7.6 1.7 11.2l-288 392c-1.4 1.9-3.5 3.1-5.8 3.2s-4.6-.7-6.3-2.3l-144-144c-3.1-3.1-3.1-8.2 0-11.3s8.2-3.1 11.3 0L151.1 451.8 433.6 67.3c2.6-3.6 7.6-4.3 11.2-1.7z"/>
+              </svg>
+            )}
+          </span>
+          Confidential
+        </button>
+      </div>
 
       {/* Region comes first — the account search below is scoped to it. */}
       <div className="form-grid">
@@ -2068,9 +2206,19 @@ function FootnotesGroup({ label, footnotes, onChange }: {
 }
 
 /* ─── Step 5: Sender ─── */
-function Step5Sender({ draft, setDraft, errors, staff = [], staffLoading, staffError }: StepProps) {
+function Step5Sender({
+  draft, setDraft, errors, staff = [], staffLoading, staffError,
+  pendingAttachments = [], existingAttachments = [], attachmentError = '',
+  onAddAttachments, onRemovePendingAttachment, onRemoveExistingAttachment,
+}: StepProps) {
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError]     = useState('')
+
+  function formatBytes(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+  }
 
   async function handleGenerateEmail() {
     setGenerating(true)
@@ -2090,7 +2238,16 @@ function Step5Sender({ draft, setDraft, errors, staff = [], staffLoading, staffE
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to generate email template')
-      setDraft(d => ({ ...d, sender: { ...d.sender, message: data.data.message } }))
+      // The AI template comes back as plain text (see worker's
+      // generateEmailTemplate) — wrap each paragraph in <p> so it renders
+      // correctly once dropped into the now-HTML RichTextEditor below.
+      const html = String(data.data.message || '')
+        .split(/\n{2,}/)
+        .map((para: string) => para.trim())
+        .filter(Boolean)
+        .map((para: string) => `<p>${para.replace(/\n/g, '<br />')}</p>`)
+        .join('')
+      setDraft(d => ({ ...d, sender: { ...d.sender, message: html } }))
     } catch (e: any) {
       setGenError(e.message || 'Failed to generate email template')
     } finally {
@@ -2136,11 +2293,25 @@ function Step5Sender({ draft, setDraft, errors, staff = [], staffLoading, staffE
           </select>
         </FormField>
 
+        <FormField label="CC (comma-separated)" error={errors.cc}>
+          <input className="nv-input" type="text"
+            placeholder="e.g. manager@nuvho.com, partner@example.com"
+            value={draft.sender.cc}
+            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, cc: e.target.value } }))} />
+        </FormField>
+        <FormField label="BCC (comma-separated)" error={errors.bcc}>
+          <input className="nv-input" type="text"
+            placeholder="e.g. records@nuvho.com"
+            value={draft.sender.bcc}
+            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, bcc: e.target.value } }))} />
+        </FormField>
+
         <FormField label="Personal message (appears in email & proposal intro)" span={2}>
-          <textarea className="nv-input" rows={4}
-            placeholder="e.g. Hi Sarah, it was great speaking with you today…"
+          <RichTextEditor
             value={draft.sender.message}
-            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, message: e.target.value } }))} />
+            onChange={html => setDraft(d => ({ ...d, sender: { ...d.sender, message: html } }))}
+            placeholder="e.g. Hi Sarah, it was great speaking with you today…"
+          />
           <div style={{ marginTop: 8 }}>
             <button
               type="button"
@@ -2155,7 +2326,59 @@ function Step5Sender({ draft, setDraft, errors, staff = [], staffLoading, staffE
             {genError && <span style={{ color: 'var(--nv-error)', fontSize: 12, marginLeft: 10 }}>{genError}</span>}
           </div>
         </FormField>
+
+        <FormField label="Attachments (optional)" error={attachmentError} span={2}>
+          <label className="attachment-upload">
+            <input type="file" multiple hidden
+              onChange={e => { onAddAttachments?.(e.target.files); e.target.value = '' }} />
+            <span className="nv-btn nv-btn--outlined nv-btn--sm">↑ Add attachment</span>
+          </label>
+
+          {(existingAttachments.length > 0 || pendingAttachments.length > 0) && (
+            <ul className="attachment-list">
+              {existingAttachments.map(att => (
+                <li key={att.id} className="attachment-list__item">
+                  <span className="attachment-list__name">{att.filename}</span>
+                  <span className="attachment-list__size">{formatBytes(att.sizeBytes)}</span>
+                  <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm attachment-list__remove"
+                    onClick={() => onRemoveExistingAttachment?.(att.id)}>Remove</button>
+                </li>
+              ))}
+              {pendingAttachments.map((file, i) => (
+                <li key={`pending-${i}-${file.name}`} className="attachment-list__item">
+                  <span className="attachment-list__name">{file.name}</span>
+                  <span className="attachment-list__size">{formatBytes(file.size)}</span>
+                  <span className="attachment-list__badge">Pending upload</span>
+                  <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm attachment-list__remove"
+                    onClick={() => onRemovePendingAttachment?.(i)}>Remove</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </FormField>
       </div>
+
+      <style jsx>{`
+        .attachment-upload { display: inline-block; }
+        .attachment-list {
+          list-style: none; margin: 10px 0 0; padding: 0;
+          display: flex; flex-direction: column; gap: 6px;
+        }
+        .attachment-list__item {
+          display: flex; align-items: center; gap: 10px;
+          padding: 8px 12px; border-radius: 8px;
+          border: 1px solid var(--nv-border-hair);
+          background: var(--nv-platinum);
+          font-size: 12px;
+        }
+        .attachment-list__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .attachment-list__size { color: var(--nv-text-muted); flex-shrink: 0; }
+        .attachment-list__badge {
+          color: var(--nv-steel-blue); font-size: 11px; flex-shrink: 0;
+          font-style: italic;
+        }
+        .attachment-list__remove { color: var(--nv-error); flex-shrink: 0; }
+      `}</style>
     </div>
   )
 }
@@ -2283,98 +2506,8 @@ function Step7Terms({ draft, setDraft, errors }: StepProps) {
         + Add Clause
       </button>
 
-      <div className="signature-box">
-        <label className="signature-box__toggle">
-          <button type="button" className={`nv-checkbox ${terms.signatureRequired ? 'nv-checkbox--checked' : ''}`}
-            onClick={() => updateTerms({ signatureRequired: !terms.signatureRequired })}>
-            {terms.signatureRequired && '✓'}
-          </button>
-          <span>Require e-signature block on the client-facing proposal</span>
-        </label>
-
-        {terms.signatureRequired && (
-          <>
-            <div className="signature-method" role="tablist" aria-label="Signature method">
-              <button type="button" role="tab" aria-selected={terms.signatureMethod === 'type'}
-                className={`signature-method__btn ${terms.signatureMethod === 'type' ? 'signature-method__btn--active' : ''}`}
-                onClick={() => updateTerms({ signatureMethod: 'type' })}>
-                Type name
-              </button>
-              <button type="button" role="tab" aria-selected={terms.signatureMethod === 'draw'}
-                className={`signature-method__btn ${terms.signatureMethod === 'draw' ? 'signature-method__btn--active' : ''}`}
-                onClick={() => updateTerms({ signatureMethod: 'draw' })}>
-                Draw signature
-              </button>
-            </div>
-
-            <div className="form-grid" style={{ marginTop: 14 }}>
-              <FormField label="Signatory Name"
-                error={terms.signatureMethod === 'type' ? errors.signatoryName : undefined}>
-                <input className="nv-input" placeholder="e.g. Jane Smith"
-                  value={terms.signatoryName} onChange={e => updateTerms({ signatoryName: e.target.value })} />
-              </FormField>
-              <FormField label="Signatory Title">
-                <input className="nv-input" placeholder="e.g. General Manager"
-                  value={terms.signatoryTitle} onChange={e => updateTerms({ signatoryTitle: e.target.value })} />
-              </FormField>
-            </div>
-
-            {terms.signatureMethod === 'type' ? (
-              <div className="signature-preview">
-                <span className="signature-preview__label">Signature preview</span>
-                <div className="signature-preview__script">
-                  {terms.signatoryName || 'Your name here'}
-                </div>
-              </div>
-            ) : (
-              <div className="signature-preview">
-                <span className="signature-preview__label">Draw signature</span>
-                {errors.signatureDataUrl && (
-                  <div style={{ color: 'var(--nv-error)', fontSize: 12, marginBottom: 6 }}>{errors.signatureDataUrl}</div>
-                )}
-                <SignaturePad
-                  value={terms.signatureDataUrl}
-                  onChange={dataUrl => updateTerms({ signatureDataUrl: dataUrl })}
-                />
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
       <style jsx>{`
         .terms-add-clause { margin-top: 4px; margin-bottom: 20px; }
-        .signature-box { padding: 16px; background: var(--nv-platinum); border-radius: 10px; }
-        .signature-box__toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12px; font-weight: 600; }
-        .nv-checkbox {
-          width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--nv-border);
-          background: transparent; cursor: pointer; flex-shrink: 0;
-          display: flex; align-items: center; justify-content: center; font-size: 11px; color: white;
-        }
-        .nv-checkbox--checked { border-color: var(--nv-blue-slate); background: var(--nv-blue-slate); }
-
-        .signature-method { display: flex; gap: 8px; margin-top: 14px; }
-        .signature-method__btn {
-          padding: 7px 16px; border-radius: 20px; border: 2px solid var(--nv-border);
-          background: white; color: var(--nv-text-body); font-size: 12px; font-weight: 600;
-          font-family: var(--font-comfortaa); cursor: pointer;
-        }
-        .signature-method__btn--active { border-color: var(--nv-blue-slate); background: var(--nv-blue-slate); color: white; }
-
-        .signature-preview { margin-top: 14px; }
-        .signature-preview__label {
-          display: block; font-size: 11px; font-weight: 700; color: var(--nv-text-muted);
-          text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;
-        }
-        .signature-preview__script {
-          font-family: var(--font-signature);
-          font-size: 40px;
-          line-height: 1.3;
-          color: var(--nv-text-heading);
-          padding: 6px 14px 10px;
-          border-bottom: 1.5px solid var(--nv-border);
-          max-width: 420px;
-        }
       `}</style>
     </div>
   )
@@ -2474,8 +2607,127 @@ function TermsEditor({ clauses, onChange }: { clauses: TermsClause[]; onChange: 
   )
 }
 
-/* ─── Step 8: Preview & Send ─── */
-function Step8Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
+/* ─── Step 8: Signature ─── */
+function Step8Signature({ draft, setDraft, errors }: StepProps) {
+  const terms = draft.terms
+
+  function updateTerms(next: Partial<typeof terms>) {
+    setDraft(d => ({ ...d, terms: { ...d.terms, ...next } }))
+  }
+
+  return (
+    <div className="step-content">
+      <h2 className="step-title">Signature</h2>
+      <p className="step-desc">
+        Add an optional personal message for the client, then configure how they&apos;ll provide their signature.
+      </p>
+
+      <FormField label="Custom message (optional)">
+        <RichTextEditor
+          value={terms.signatureMessage}
+          onChange={html => updateTerms({ signatureMessage: html })}
+          placeholder="e.g. Should the terms of this proposal be acceptable, please sign below and return the applicable service agreement…"
+        />
+      </FormField>
+
+      <div className="signature-box">
+        <label className="signature-box__toggle">
+          <button type="button" className={`nv-checkbox ${terms.signatureRequired ? 'nv-checkbox--checked' : ''}`}
+            onClick={() => updateTerms({ signatureRequired: !terms.signatureRequired })}>
+            {terms.signatureRequired && '✓'}
+          </button>
+          <span>Require e-signature block on the client-facing proposal</span>
+        </label>
+
+        {terms.signatureRequired && (
+          <>
+            <div className="signature-method" role="tablist" aria-label="Signature method">
+              <button type="button" role="tab" aria-selected={terms.signatureMethod === 'type'}
+                className={`signature-method__btn ${terms.signatureMethod === 'type' ? 'signature-method__btn--active' : ''}`}
+                onClick={() => updateTerms({ signatureMethod: 'type' })}>
+                Type name
+              </button>
+              <button type="button" role="tab" aria-selected={terms.signatureMethod === 'draw'}
+                className={`signature-method__btn ${terms.signatureMethod === 'draw' ? 'signature-method__btn--active' : ''}`}
+                onClick={() => updateTerms({ signatureMethod: 'draw' })}>
+                Draw signature
+              </button>
+            </div>
+
+            <div className="form-grid" style={{ marginTop: 14 }}>
+              <FormField label="Signatory Name"
+                error={terms.signatureMethod === 'type' ? errors.signatoryName : undefined}>
+                <input className="nv-input" placeholder="e.g. Jane Smith"
+                  value={terms.signatoryName} onChange={e => updateTerms({ signatoryName: e.target.value })} />
+              </FormField>
+              <FormField label="Signatory Title">
+                <input className="nv-input" placeholder="e.g. General Manager"
+                  value={terms.signatoryTitle} onChange={e => updateTerms({ signatoryTitle: e.target.value })} />
+              </FormField>
+            </div>
+
+            {terms.signatureMethod === 'type' ? (
+              <div className="signature-preview">
+                <span className="signature-preview__label">Signature preview</span>
+                <div className="signature-preview__script">
+                  {terms.signatoryName || 'Your name here'}
+                </div>
+              </div>
+            ) : (
+              <div className="signature-preview">
+                <span className="signature-preview__label">Draw signature</span>
+                {errors.signatureDataUrl && (
+                  <div style={{ color: 'var(--nv-error)', fontSize: 12, marginBottom: 6 }}>{errors.signatureDataUrl}</div>
+                )}
+                <SignaturePad
+                  value={terms.signatureDataUrl}
+                  onChange={dataUrl => updateTerms({ signatureDataUrl: dataUrl })}
+                />
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      <style jsx>{`
+        .signature-box { padding: 16px; background: var(--nv-platinum); border-radius: 10px; margin-top: 20px; }
+        .signature-box__toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12px; font-weight: 600; }
+        .nv-checkbox {
+          width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--nv-border);
+          background: transparent; cursor: pointer; flex-shrink: 0;
+          display: flex; align-items: center; justify-content: center; font-size: 11px; color: white;
+        }
+        .nv-checkbox--checked { border-color: var(--nv-blue-slate); background: var(--nv-blue-slate); }
+
+        .signature-method { display: flex; gap: 8px; margin-top: 14px; }
+        .signature-method__btn {
+          padding: 7px 16px; border-radius: 20px; border: 2px solid var(--nv-border);
+          background: white; color: var(--nv-text-body); font-size: 12px; font-weight: 600;
+          font-family: var(--font-comfortaa); cursor: pointer;
+        }
+        .signature-method__btn--active { border-color: var(--nv-blue-slate); background: var(--nv-blue-slate); color: white; }
+
+        .signature-preview { margin-top: 14px; }
+        .signature-preview__label {
+          display: block; font-size: 11px; font-weight: 700; color: var(--nv-text-muted);
+          text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;
+        }
+        .signature-preview__script {
+          font-family: var(--font-signature);
+          font-size: 40px;
+          line-height: 1.3;
+          color: var(--nv-text-heading);
+          padding: 6px 14px 10px;
+          border-bottom: 1.5px solid var(--nv-border);
+          max-width: 420px;
+        }
+      `}</style>
+    </div>
+  )
+}
+
+/* ─── Step 9: Preview & Send ─── */
+function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
   const total = draft.services.reduce((acc, s) => acc + s.monthlyFee * s.term + s.setupFee, 0)
   const model = buildDocModelFromDraft(draft, staff)
   const [exporting, setExporting] = useState<'pdf' | 'word' | null>(null)
@@ -2517,6 +2769,7 @@ function Step8Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
               ? (draft.terms.signatureDataUrl ? 'Drawn signature captured' : 'Required')
               : (draft.terms.signatoryName || 'Required')
         } />
+        <SummaryRow label="Custom message" value={draft.terms.signatureMessage?.trim() ? 'Added' : 'Not set'} />
       </div>
 
       <FormField label="Send proposal to (confirm email) *" error={errors.recipientEmail}>
@@ -2626,6 +2879,15 @@ interface StepProps {
   // rather than the (possibly stale, code-only) fallback.
   serviceCategories?: ServiceCategory[]
   serviceCategoriesLoading?: boolean
+  // Only used by Step5Sender — attachment picker state/handlers. See the
+  // pendingAttachments/existingAttachments state comment in
+  // NewProposalPage for why uploads are deferred until a proposal id exists.
+  pendingAttachments?: File[]
+  existingAttachments?: ProposalAttachment[]
+  attachmentError?: string
+  onAddAttachments?: (files: FileList | null) => void
+  onRemovePendingAttachment?: (index: number) => void
+  onRemoveExistingAttachment?: (attachmentId: string) => void
 }
 
 function FormField({ label, error, children, span }: {
@@ -2656,6 +2918,24 @@ const stepStyles = `
     margin-bottom: 2px;
   }
   .step-desc { font-size: 14px; color: var(--nv-text-muted); line-height: 1.55; }
+  .step-header-row { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+  .confidential-toggle {
+    display: flex; align-items: center; gap: 8px; flex-shrink: 0;
+    padding: 7px 14px 7px 10px; border-radius: 999px; border: 1.5px solid var(--nv-border);
+    background: none; font-size: 12.5px; font-weight: 600; color: var(--nv-text-muted);
+    cursor: pointer; white-space: nowrap;
+  }
+  .confidential-toggle--active {
+    border-color: var(--nv-blue-slate); color: var(--nv-blue-slate); background: rgba(40,104,127,0.06);
+  }
+  .confidential-toggle__check {
+    width: 16px; height: 16px; border-radius: 4px; border: 1.5px solid var(--nv-border);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    transition: background 150ms, border-color 150ms;
+  }
+  .confidential-toggle--active .confidential-toggle__check {
+    background: var(--nv-blue-slate); border-color: var(--nv-blue-slate);
+  }
   .form-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -2691,7 +2971,7 @@ function validateStep(draft: ProposalDraft): Record<string, string> {
   if (draft.step === 5 && !draft.sender.staffId) {
     errs.staffId = 'Please select a sender'
   }
-  if (draft.step === 7 && draft.terms.signatureRequired) {
+  if (draft.step === 8 && draft.terms.signatureRequired) {
     if (draft.terms.signatureMethod === 'draw') {
       if (!draft.terms.signatureDataUrl) {
         errs.signatureDataUrl = 'Please draw a signature, or switch to "Type name"'

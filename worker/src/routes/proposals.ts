@@ -1,6 +1,6 @@
 import type {
   Env, ProposalRow, ServiceRow, Session,
-  ScopeItemRow, FeeRowRow, PricingFootnoteRow, TermsRow,
+  ScopeItemRow, FeeRowRow, PricingFootnoteRow, TermsRow, AttachmentRow,
 } from '../types'
 import { ok, err } from '../lib/response'
 import { ulid, randomToken } from '../lib/ulid'
@@ -79,6 +79,7 @@ function mapTermsRow(termsRow: TermsRow | null) {
     signatoryName:      termsRow.signatory_name || '',
     signatoryTitle:     termsRow.signatory_title || '',
     signatureDataUrl:   termsRow.signature_data_url || '',
+    signatureMessage:   termsRow.signature_message || '',
   }
 }
 
@@ -109,8 +110,16 @@ export async function getProposal(proposalId: string, env: Env, session: Session
     .bind(proposalId).first<TermsRow>()
   const terms = mapTermsRow(termsRow ?? null)
 
+  // Attachments (wizard Step 5 — Sender) — metadata only, bytes stay in R2
+  const { results: attachmentRows } = await env.DB.prepare(
+    'SELECT id, filename, content_type, size_bytes FROM proposal_attachments WHERE proposal_id = ? ORDER BY sort_order'
+  ).bind(proposalId).all<Pick<AttachmentRow, 'id' | 'filename' | 'content_type' | 'size_bytes'>>()
+  const attachments = attachmentRows.map(a => ({
+    id: a.id, filename: a.filename, contentType: a.content_type, sizeBytes: a.size_bytes,
+  }))
+
   return ok({
-    ...proposal, services: servicesWithChildren, sender, terms,
+    ...proposal, services: servicesWithChildren, sender, terms, attachments,
     hgid: registryLink?.hgid ?? null,
     entity_code: registryLink?.entity_code ?? null,
   })
@@ -156,9 +165,9 @@ export async function createProposal(request: Request, env: Env, session: Sessio
     INSERT INTO proposals (
       id, np_id, hotel_name, contact_name, contact_email, contact_phone, contact_title,
       property_address, region, nuvho_address, company_name, about_nuvho, footer_text, currency,
-      status, sender_staff_id, account_manager_stf_id, sender_message,
+      status, sender_staff_id, account_manager_stf_id, sender_message, sender_cc, sender_bcc,
       cover_url, hubspot_deal_id, signing_token, expires_at, valid_until
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?)
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     proposalId, npId,
     hotel.name, hotel.contactName, hotel.contactEmail,
@@ -168,6 +177,7 @@ export async function createProposal(request: Request, env: Env, session: Sessio
     regionSettings?.aboutNuvho || null, regionSettings?.footerText || null,
     regionSettings?.currency || 'AUD',
     sender.staffId, sender.accountManagerId || null, sender.message || null,
+    sender.cc || null, sender.bcc || null,
     cover?.coverUrl || null, hotel.hubspotDealId || null,
     signingToken, expiresAt, expiresAt,
   ).run()
@@ -306,6 +316,97 @@ export async function deleteProposal(proposalId: string, env: Env, session: Sess
   return ok({ deleted: true })
 }
 
+/* ─── Attachments (wizard Step 5 — Sender) ───────────────────
+ * Bytes live in R2 (env.STORAGE); proposal_attachments is just the pointer
+ * + metadata the wizard's attachment list needs. Uploaded any time a
+ * proposal already has an id (a fresh proposal only gets one once the
+ * wizard's Save Draft / Generate & Send calls createProposal(), so the
+ * frontend defers upload of newly-picked files until then). */
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024   // 10MB per file
+const MAX_ATTACHMENTS      = 5                  // per proposal — keeps the combined
+                                                 // Resend email payload well under its request-size limit
+
+export async function uploadAttachment(
+  proposalId: string, request: Request, env: Env, session: Session
+): Promise<Response> {
+  const proposal = await env.DB.prepare('SELECT id FROM proposals WHERE id = ?')
+    .bind(proposalId).first<{ id: string }>()
+  if (!proposal) return err('Proposal not found', 404)
+
+  const countRow = await env.DB.prepare(
+    'SELECT COUNT(*) as n FROM proposal_attachments WHERE proposal_id = ?'
+  ).bind(proposalId).first<{ n: number }>()
+  if ((countRow?.n ?? 0) >= MAX_ATTACHMENTS) {
+    return err(`Maximum ${MAX_ATTACHMENTS} attachments per proposal`, 413)
+  }
+
+  let form: FormData
+  try {
+    form = await request.formData()
+  } catch {
+    return err('Expected multipart/form-data with a "file" field')
+  }
+  // @cloudflare/workers-types declares FormDataEntryValue's File branch as an
+  // interface, not a constructable class, so `instanceof File` fails to
+  // typecheck under this project's `lib: ["ES2022"]` tsconfig (no DOM lib) —
+  // duck-type it instead (a real uploaded file always has these fields).
+  const entry = form.get('file')
+  const file = entry as { name?: string; size?: number; type?: string; arrayBuffer?: () => Promise<ArrayBuffer> } | null
+  if (!file || typeof file === 'string' || typeof file.arrayBuffer !== 'function' || typeof file.size !== 'number') {
+    return err('No file provided')
+  }
+  if (file.size > MAX_ATTACHMENT_BYTES) {
+    return err(`"${file.name}" is too large — ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB limit per file`, 413)
+  }
+
+  const attachmentId = ulid()
+  const r2Key = `attachments/${proposalId}/${attachmentId}-${file.name}`
+  await env.STORAGE.put(r2Key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type || 'application/octet-stream' },
+  })
+
+  const maxOrderRow = await env.DB.prepare(
+    'SELECT COALESCE(MAX(sort_order), -1) as m FROM proposal_attachments WHERE proposal_id = ?'
+  ).bind(proposalId).first<{ m: number }>()
+  const sortOrder = (maxOrderRow?.m ?? -1) + 1
+
+  await env.DB.prepare(`
+    INSERT INTO proposal_attachments (id, proposal_id, filename, content_type, size_bytes, r2_key, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
+  `).bind(attachmentId, proposalId, file.name, file.type || null, file.size, r2Key, sortOrder).run()
+
+  return ok({ id: attachmentId, filename: file.name, contentType: file.type || null, sizeBytes: file.size }, 201)
+}
+
+export async function deleteAttachment(
+  proposalId: string, attachmentId: string, env: Env, session: Session
+): Promise<Response> {
+  const row = await env.DB.prepare(
+    'SELECT r2_key FROM proposal_attachments WHERE id = ? AND proposal_id = ?'
+  ).bind(attachmentId, proposalId).first<{ r2_key: string }>()
+  if (!row) return err('Attachment not found', 404)
+
+  await env.STORAGE.delete(row.r2_key)
+  await env.DB.prepare('DELETE FROM proposal_attachments WHERE id = ?').bind(attachmentId).run()
+  return ok({ deleted: true })
+}
+
+/* Base64-encodes an ArrayBuffer in fixed-size chunks — spreading a whole
+ * large Uint8Array into String.fromCharCode(...) at once can blow the call
+ * stack, so this walks it 32KB at a time instead. Used by
+ * sendProposalEmail() to inline attachment bytes for the Resend API, which
+ * (like most transactional-email APIs) expects attachment content as base64
+ * rather than as a separate multipart body. */
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer)
+  let binary = ''
+  const chunkSize = 0x8000
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize))
+  }
+  return btoa(binary)
+}
+
 /* ─── Send proposal ────────────────────────────────────────── */
 export async function sendProposal(proposalId: string, env: Env, session: Session): Promise<Response> {
   const proposal = await env.DB.prepare('SELECT * FROM proposals WHERE id = ?')
@@ -348,10 +449,10 @@ export async function sendProposal(proposalId: string, env: Env, session: Sessio
 const FULL_EDIT_FIELDS = [
   'hotel_name', 'contact_name', 'contact_email', 'contact_phone', 'contact_title',
   'property_address', 'region', 'nuvho_address', 'company_name', 'about_nuvho', 'footer_text', 'currency',
-  'sender_staff_id', 'account_manager_stf_id', 'sender_message', 'cover_url',
+  'sender_staff_id', 'account_manager_stf_id', 'sender_message', 'sender_cc', 'sender_bcc', 'cover_url',
   'hubspot_deal_id',
 ]
-const ALWAYS_ALLOWED_FIELDS = ['sender_message', 'cover_url', 'hubspot_deal_id']
+const ALWAYS_ALLOWED_FIELDS = ['sender_message', 'sender_cc', 'sender_bcc', 'cover_url', 'hubspot_deal_id']
 
 export async function updateProposal(
   proposalId: string, request: Request, env: Env, session: Session
@@ -552,6 +653,7 @@ export async function signProposal(token: string, request: Request, env: Env): P
     signatoryName,
     signatoryTitle:    body.signatoryTitle?.trim() || existingTerms?.signatoryTitle || '',
     signatureDataUrl:  signatureMethod === 'draw' ? signatureDataUrl : '',
+    signatureMessage:  existingTerms?.signatureMessage || '',
   })
 
   await auditLog(env, proposal.id, 'signed', proposal.contact_email, { signatoryName, signatureMethod })
@@ -686,8 +788,8 @@ async function insertServiceChildren(env: Env, serviceRowId: string, svc: any): 
 async function upsertTerms(env: Env, proposalId: string, terms: any): Promise<void> {
   if (!terms) return
   await env.DB.prepare(`
-    INSERT INTO proposal_terms (proposal_id, clauses_json, validity_days, signature_required, signature_method, signatory_name, signatory_title, signature_data_url, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO proposal_terms (proposal_id, clauses_json, validity_days, signature_required, signature_method, signatory_name, signatory_title, signature_data_url, signature_message, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(proposal_id) DO UPDATE SET
       clauses_json       = excluded.clauses_json,
       validity_days      = excluded.validity_days,
@@ -696,6 +798,7 @@ async function upsertTerms(env: Env, proposalId: string, terms: any): Promise<vo
       signatory_name     = excluded.signatory_name,
       signatory_title    = excluded.signatory_title,
       signature_data_url = excluded.signature_data_url,
+      signature_message  = excluded.signature_message,
       updated_at         = datetime('now')
   `).bind(
     proposalId,
@@ -706,6 +809,7 @@ async function upsertTerms(env: Env, proposalId: string, terms: any): Promise<vo
     terms.signatoryName || null,
     terms.signatoryTitle || null,
     terms.signatureDataUrl || null,
+    terms.signatureMessage || null,
   ).run()
 }
 
@@ -729,7 +833,7 @@ async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: 
       </div>
       <div style="padding: 32px 24px;">
         <p>Dear ${proposal.contact_name},</p>
-        ${proposal.sender_message ? `<p>${proposal.sender_message}</p>` : ''}
+        ${proposal.sender_message ? `<div>${proposal.sender_message}</div>` : ''}
         <p>Please review and accept your proposal for <strong>${proposal.hotel_name}</strong>.</p>
         <div style="text-align: center; margin: 32px 0;">
           <a href="${publicUrl}"
@@ -752,6 +856,31 @@ async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: 
     </div>
   `
 
+  // sender_cc/sender_bcc are comma-separated strings from the wizard's
+  // Sender step (Step 5) — split into arrays for Resend, dropping blanks.
+  const splitEmails = (value: string | null) =>
+    (value || '').split(',').map(e => e.trim()).filter(Boolean)
+  const cc  = splitEmails(proposal.sender_cc)
+  const bcc = splitEmails(proposal.sender_bcc)
+
+  // Attachments (wizard Step 5 — Sender) — pull bytes from R2 and inline as
+  // base64 for Resend's `attachments` field. Best-effort per file: a single
+  // missing/unreadable R2 object shouldn't block the whole proposal send.
+  const { results: attachmentRows } = await env.DB.prepare(
+    'SELECT filename, content_type, r2_key FROM proposal_attachments WHERE proposal_id = ? ORDER BY sort_order'
+  ).bind(proposal.id).all<Pick<AttachmentRow, 'filename' | 'content_type' | 'r2_key'>>()
+
+  const attachments: { filename: string; content: string }[] = []
+  for (const row of attachmentRows) {
+    try {
+      const obj = await env.STORAGE.get(row.r2_key)
+      if (!obj) { console.error('[Attachment] R2 object missing:', row.r2_key); continue }
+      attachments.push({ filename: row.filename, content: arrayBufferToBase64(await obj.arrayBuffer()) })
+    } catch (e) {
+      console.error('[Attachment] failed to read from R2:', row.r2_key, e)
+    }
+  }
+
   await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -761,6 +890,9 @@ async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: 
     body: JSON.stringify({
       from:    `${sender?.name || 'Nuvho Team'} <proposals@nuvho.com>`,
       to:      [proposal.contact_email],
+      ...(cc.length          ? { cc }          : {}),
+      ...(bcc.length         ? { bcc }         : {}),
+      ...(attachments.length ? { attachments } : {}),
       subject: `Your Nuvho Proposal — ${proposal.hotel_name}`,
       html,
     }),

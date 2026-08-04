@@ -70,7 +70,7 @@ export function currencySymbol(code: string): string {
 }
 
 // Partial, not a full Record<ServiceCode,...> — ServiceCode is now any string
-// (Settings → Service Lines categories are staff-editable), so most codes
+// (Settings → Body Configuration categories are staff-editable), so most codes
 // won't have a hardcoded entry here. Use getServiceEntry()/getServiceLabel()/
 // getServiceColor() below instead of indexing this directly.
 export const SERVICE_CATALOG: Partial<Record<string, ServiceCatalogEntry>> = {
@@ -186,7 +186,7 @@ function generateId(prefix: string): string {
 
 // Fallback colors cycled (by a stable hash of the code) for any service code
 // that has no hardcoded SERVICE_CATALOG entry — e.g. Systems/Advisory, or any
-// custom category added from Settings → Service Lines. Same hash every render
+// custom category added from Settings → Body Configuration. Same hash every render
 // so a given code always gets the same color.
 const FALLBACK_SERVICE_COLORS = [
   '#c98a3e', '#5c6bc0', '#4d8f6b', '#a2557c', '#3f8fa8', '#8a7548',
@@ -201,13 +201,13 @@ function hashCode(code: string): number {
 // Safe accessor for SERVICE_CATALOG — returns the hardcoded entry when one
 // exists (RM/SM/CR/MK today), otherwise synthesizes an empty-content entry
 // (no pre-built scope/pricing template) so callers never index undefined.
-// `label` lets callers pass the live Settings → Service Lines label so the
+// `label` lets callers pass the live Settings → Body Configuration label so the
 // synthesized entry's label matches what's shown elsewhere, instead of the
 // bare code. `liveScope` lets callers pass the category's Settings-configured
 // default Scope of Work (service_categories.default_scope_json, fully staff-
 // editable) — when present and non-empty it takes priority over this file's
 // hardcoded `sections`, so Step 2/3 of the wizard always reflect what staff
-// have configured in Settings → Service Lines rather than a stale built-in.
+// have configured in Settings → Body Configuration rather than a stale built-in.
 export function getServiceEntry(
   code: string, label?: string, liveScope?: ServiceCategoryScopeSection[]
 ): ServiceCatalogEntry {
@@ -297,6 +297,7 @@ export function initTerms(region: Region): ProposalTerms {
     signatoryName:     '',
     signatoryTitle:    '',
     signatureDataUrl:  '',
+    signatureMessage:  '',
   }
 }
 

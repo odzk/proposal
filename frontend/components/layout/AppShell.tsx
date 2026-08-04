@@ -32,22 +32,17 @@ const navItems: NavItem[] = [
   },
   {
     href: '/proposals',
-    label: 'Proposals',
+    label: 'Documents',
     icon: <Image src="/icons/file-contract.svg" width={18} height={18} alt="" style={{ filter: WHITE_ICON }} />,
-  },
-  {
-    href: '/proposals/new',
-    label: 'New Proposal',
-    icon: <Image src="/icons/rocket.svg" width={18} height={18} alt="" style={{ filter: WHITE_ICON }} />,
   },
   {
     href: '/settings',
     label: 'Settings',
     icon: <Image src="/icons/gears.svg" width={18} height={18} alt="" style={{ filter: WHITE_ICON }} />,
     children: [
-      { href: '/settings/region-settings', label: 'Region Settings' },
-      { href: '/settings/service-lines',   label: 'Service Lines'   },
-      { href: '/settings/user-settings',   label: 'User Settings'   },
+      { href: '/settings/entities',            label: 'Entities'            },
+      { href: '/settings/body-configuration',  label: 'Body Configuration'  },
+      { href: '/settings/user-settings',       label: 'User Settings'       },
     ],
   },
 ]
