@@ -17,6 +17,7 @@ import { SignaturePad } from '@/components/proposal/SignaturePad'
 import { RichTextEditor } from '@/components/proposal/RichTextEditor'
 import { buildDocxFile } from '@/lib/exportDocx'
 import { setNavigationGuard } from '@/lib/navigationGuard'
+import { useSession } from '@/components/auth/AuthGuard'
 
 const STEPS = [
   { id: 1, label: 'Hotel Details'  },
@@ -62,6 +63,7 @@ export default function NewProposalPage() {
   const [staffLoading, setStaffLoading] = useState(true)
   const [staffError, setStaffError]     = useState('')
   const [loadingExisting, setLoadingExisting] = useState(!!editId)
+  const session = useSession()
 
   // Attachments (Step 5 — Sender). Split into two lists because a brand-new
   // proposal has no id to upload against yet: newly-picked files sit in
@@ -245,6 +247,16 @@ export default function NewProposalPage() {
     })()
     return () => { cancelled = true }
   }, [editId])
+
+  // NUVCL-88: default "Sending on behalf of" to the currently signed-in
+  // user on a brand-new proposal (never on an edit-existing load, which
+  // sets sender.staffId from the saved proposal a few lines up). Guarded
+  // on the current value being empty so it only fires once and doesn't
+  // clobber a manual change made afterwards.
+  React.useEffect(() => {
+    if (editId || !session?.staffId) return
+    setDraft(d => d.sender.staffId ? d : { ...d, sender: { ...d.sender, staffId: session.staffId! } })
+  }, [editId, session])
 
   React.useEffect(() => {
     let cancelled = false

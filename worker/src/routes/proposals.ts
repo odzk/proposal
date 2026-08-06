@@ -881,6 +881,15 @@ async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: 
     }
   }
 
+  // NUVCL-79: send from the individual sender's own @nuvho.com address
+  // (not a shared/group address) for personalization. Falls back to
+  // proposals@nuvho.com only if the sender's staff record has no email on
+  // file. This relies on nuvho.com being domain-verified in Resend (not a
+  // single verified sender) — true today since proposals@nuvho.com already
+  // sends successfully — so any @nuvho.com from-address is deliverable
+  // without new secrets or per-user credentials.
+  const fromEmail = sender?.email || 'proposals@nuvho.com'
+
   await fetch('https://api.resend.com/emails', {
     method: 'POST',
     headers: {
@@ -888,8 +897,9 @@ async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: 
       'Content-Type':  'application/json',
     },
     body: JSON.stringify({
-      from:    `${sender?.name || 'Nuvho Team'} <proposals@nuvho.com>`,
+      from:    `${sender?.name || 'Nuvho Team'} <${fromEmail}>`,
       to:      [proposal.contact_email],
+      ...(sender?.email      ? { reply_to: sender.email } : {}),
       ...(cc.length          ? { cc }          : {}),
       ...(bcc.length         ? { bcc }         : {}),
       ...(attachments.length ? { attachments } : {}),
