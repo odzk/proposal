@@ -283,15 +283,20 @@ export function defaultTermsClauses(region: Region): { heading: string; text: st
   ]
 }
 
-export function initTerms(region: Region): ProposalTerms {
+export function initTerms(_region: Region): ProposalTerms {
   return {
-    clauses: defaultTermsClauses(region).map(c => ({
-      id:      generateId('term'),
-      heading: c.heading,
-      text:    c.text,
-      enabled: true,
-    })),
-    validityDays:      30,
+    // Clauses are no longer seeded with a generic regional default here —
+    // they're entity-specific (Settings → Entities' clauses_json), applied
+    // once a Governing Entity actually resolves (see the wizard's entity-
+    // clauses effect in proposals/new/page.tsx). An unresolved/skipped
+    // entity means genuinely empty clauses, not a filler set of 8.
+    clauses: [] as TermsClause[],
+    validityDays:         30,
+    // Left blank — the wizard (NewProposalPage) defaults this to the
+    // contracting entity chosen on Step 1 (hotel.entityCode) once that's
+    // known, rather than baking a guess in here where no hotel/entity
+    // context exists yet.
+    governingEntityCode:  '',
     signatureRequired: true,
     signatureMethod:   'type',
     signatoryName:     '',

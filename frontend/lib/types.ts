@@ -191,6 +191,15 @@ export type SignatureMethod = 'type' | 'draw'
 export interface ProposalTerms {
   clauses:           TermsClause[]
   validityDays:      number
+  // Nuvho legal entity whose laws/jurisdiction this agreement is governed by
+  // — a registry entity_code (e.g. NVH-AU-OPS), selected on Step 7 from the
+  // same live Master Registry entity list Settings → Entities lists (see the
+  // Governing Entity picker in app/(app)/proposals/new/page.tsx's
+  // Step7Terms). Defaults to the contracting entity chosen on Step 1
+  // (hotel.entityCode) but can be overridden — the two need not match if,
+  // say, the contract itself should be governed by a different entity than
+  // the one billing the client.
+  governingEntityCode: string
   signatureRequired: boolean
   // How the signatory provides their signature — typed (rendered in a script
   // font) or hand-drawn on a canvas. `signatoryName` doubles as the printed
@@ -247,6 +256,10 @@ export interface ProposalDraft {
   sender: {
     staffId: string
     accountManagerId: string
+    // Email subject line for the proposal-sent email. Left blank falls back
+    // to the worker's default "Your Nuvho Proposal — {hotel name}" (see
+    // sendProposalEmail() in worker/src/routes/proposals.ts).
+    subject: string
     message: string
     // Comma-separated additional recipients on the proposal-sent email.
     cc:  string

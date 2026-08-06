@@ -19,7 +19,10 @@ export interface Env {
   XERO_CLIENT_ID:      string
   XERO_CLIENT_SECRET:  string
   JWT_SECRET:          string
-  RESEND_API_KEY:      string
+  RESEND_API_KEY:      string   // DEPRECATED — replaced by Microsoft Graph app-only sendMail
+                                 // (lib/graph.ts sendMailViaGraph, using AZURE_CLIENT_SECRET below).
+                                 // Kept here only so the binding doesn't dangle if still set in
+                                 // wrangler.toml; safe to remove once that secret is deleted.
   ANTHROPIC_API_KEY:   string
   REGISTRY_API_KEY:    string   // Nuvho Master Registry X-Registry-Key (register.nuvho.com)
 }
@@ -53,6 +56,7 @@ export interface ProposalRow {
   sender_message:      string | null
   sender_cc:           string | null
   sender_bcc:          string | null
+  sender_subject:      string | null
   cover_url:           string | null
   pdf_url:             string | null
   signed_pdf_url:      string | null
@@ -114,15 +118,18 @@ export interface TermsClauseJson {
 }
 
 export interface TermsRow {
-  proposal_id:         string
-  clauses_json:        string
-  validity_days:       number
-  signature_required:  number
-  signature_method:    'type' | 'draw'
-  signatory_name:      string | null
-  signatory_title:     string | null
-  signature_data_url:  string | null
-  signature_message:   string | null
+  proposal_id:            string
+  clauses_json:           string
+  validity_days:          number
+  // Registry entity_code the agreement is governed by — selected on Step 7's
+  // Governing Entity picker (see migrations/0009_proposal_terms_governing_entity.sql).
+  governing_entity_code:  string | null
+  signature_required:     number
+  signature_method:       'type' | 'draw'
+  signatory_name:         string | null
+  signatory_title:        string | null
+  signature_data_url:     string | null
+  signature_message:      string | null
 }
 
 export interface AttachmentRow {

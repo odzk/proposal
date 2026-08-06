@@ -22,20 +22,47 @@ import type { ProposalDocModel } from '@/lib/documentModel'
    The "Nuvho Pty Ltd" entry's label follows the region's Company Name
    (Settings → Region Settings) so it matches whatever the section heading
    itself renders (see below) instead of staying hardcoded to the AU entity. */
-function buildTocItems(companyName: string): { label: string; id: string }[] {
-  return [
-    { label: 'Background',                     id: 'doc-section-background' },
-    { label: 'Scope of Works',                  id: 'doc-section-scope'      },
-    { label: companyName || 'Nuvho Pty Ltd',    id: 'doc-section-nuvho'      },
-    { label: 'Fee Structure',                   id: 'doc-section-fees'       },
-    { label: 'Quote Approval',                  id: 'doc-section-approval'   },
-    { label: 'Appendix 1 – Terms & Conditions', id: 'doc-section-appendix'   },
-  ]
+function buildTocItems(companyName: string, visible: {
+  showBackground: boolean; showScope: boolean; showFees: boolean; showApproval: boolean; showAppendix: boolean
+}): { label: string; id: string }[] {
+  const items: { label: string; id: string }[] = []
+  if (visible.showBackground) items.push({ label: 'Background', id: 'doc-section-background' })
+  if (visible.showScope)      items.push({ label: 'Scope of Works', id: 'doc-section-scope' })
+  items.push({ label: companyName || 'Nuvho Pty Ltd', id: 'doc-section-nuvho' })
+  if (visible.showFees)       items.push({ label: 'Fee Structure', id: 'doc-section-fees' })
+  if (visible.showApproval)   items.push({ label: 'Quote Approval', id: 'doc-section-approval' })
+  if (visible.showAppendix)   items.push({ label: 'Appendix 1 – Terms & Conditions', id: 'doc-section-appendix' })
+  return items
 }
 
 export function ProposalDocument({ model }: { model: ProposalDocModel }) {
   const multiSvc = model.services.length > 1
-  const tocItems = buildTocItems(model.companyName)
+  // A step that was skipped (left with no usable content) drops both its
+  // Table of Contents entry and its own page below — an empty "Scope of
+  // Works" page with just a placeholder sentence isn't useful in a
+  // client-facing document. "Nuvho Pty Ltd" and "Quote Approval" are
+  // deliberately always shown: neither has a Skip button of its own (About
+  // Nuvho is auto-filled from Region/Entity Settings, not a wizard step;
+  // Quote Approval always confirms the proposal's validity window even when
+  // no signature block is required).
+  // Background, Scope of Works, and Fee Structure all key off the same
+  // "was the Services step skipped" check, so all three links/pages
+  // disappear together rather than Fee Structure having its own separate
+  // "no fee rows yet" condition.
+  const showServices    = model.services.length > 0
+  const showBackground = showServices
+  const showScope       = showServices
+  const showFees         = showServices
+  // Quote Approval hides entirely when Step 8's "Signature Required" toggle
+  // is off, instead of showing the old "No signature block requested" filler
+  // sentence. The legal footer (model.footerText) is unrelated boilerplate,
+  // so it still renders on its own further down even when this is false.
+  const showApproval     = model.signatureRequired
+  // Hides when EITHER Services was skipped OR the resolved entity has no
+  // clauses configured — both are independent reasons for there being
+  // nothing to show.
+  const showAppendix     = showServices && model.clauses.length > 0
+  const tocItems = buildTocItems(model.companyName, { showBackground, showScope, showFees, showApproval, showAppendix })
 
   function jumpTo(e: React.MouseEvent, id: string) {
     e.preventDefault()
@@ -58,12 +85,13 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
       {/* Letter */}
       <div className="doc-page">
         <div className="doc-letterhead">
-          <div className="doc-date">Date of Issue: {model.dateIssued}</div>
-          {model.nuvhoAddress && (
-            <div className="doc-nuvho-address">
-              {model.nuvhoAddress.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
-            </div>
-          )}
+          <div className="doc-letterhead__logo">
+            <NuvhoLogo height={96} />
+          </div>
+          <div className="doc-nuvho-address">
+            {model.nuvhoAddress && model.nuvhoAddress.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
+            <div className="doc-date">Date of Issue: {model.dateIssued}</div>
+          </div>
         </div>
         <div className="doc-address">
           {model.contactName || '[Client Name]'}<br />
@@ -93,43 +121,47 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         </div>
       </div>
 
-      {/* Background */}
-      <div className="doc-page" id="doc-section-background">
-        <h3 className="doc-heading">Background</h3>
-        <p>
-          {model.hotelName || 'The property'} has engaged Nuvho to deliver {model.title.toLowerCase()}, with a
-          strong focus on maximising commercial performance and elevating the guest experience. This proposal
-          outlines our recommended scope of works, fee structure and terms of engagement.
-        </p>
-      </div>
+      {/* Background — hidden when Services (Step 2) was skipped, i.e. there's
+          nothing to describe. */}
+      {showBackground && (
+        <div className="doc-page" id="doc-section-background">
+          <h3 className="doc-heading">Background</h3>
+          <p>
+            {model.hotelName || 'The property'} has engaged Nuvho to deliver {model.title.toLowerCase()}, with a
+            strong focus on maximising commercial performance and elevating the guest experience. This proposal
+            outlines our recommended scope of works, fee structure and terms of engagement.
+          </p>
+        </div>
+      )}
 
-      {/* Scope of Works */}
-      <div className="doc-page" id="doc-section-scope">
-        <h3 className="doc-heading">Scope of Works</h3>
-        <p>
-          We develop a long-term and collaborative partnership with our clients, delivering services and value
-          across the spectrum of hotel operations.
-        </p>
-        {model.services.length === 0 && <p className="doc-empty">No services selected yet.</p>}
-        {model.services.map(s => {
-          let lastSection: string | null = null
-          return (
-            <div key={s.code} className="doc-service-block">
-              {multiSvc && <h4 className="doc-subheading">{s.label}</h4>}
-              {s.scopeItems.filter(it => it.enabled).map(it => {
-                const showHeading = it.sectionHeading !== lastSection
-                lastSection = it.sectionHeading
-                return (
-                  <React.Fragment key={it.id}>
-                    {showHeading && <h5 className="doc-subheading2">{it.sectionHeading}</h5>}
-                    <div className="doc-bullet">{it.text || '—'}</div>
-                  </React.Fragment>
-                )
-              })}
-            </div>
-          )
-        })}
-      </div>
+      {/* Scope of Works — hidden when Services (Step 2) was skipped. */}
+      {showScope && (
+        <div className="doc-page" id="doc-section-scope">
+          <h3 className="doc-heading">Scope of Works</h3>
+          <p>
+            We develop a long-term and collaborative partnership with our clients, delivering services and value
+            across the spectrum of hotel operations.
+          </p>
+          {model.services.map(s => {
+            let lastSection: string | null = null
+            return (
+              <div key={s.code} className="doc-service-block">
+                {multiSvc && <h4 className="doc-subheading">{s.label}</h4>}
+                {s.scopeItems.filter(it => it.enabled).map(it => {
+                  const showHeading = it.sectionHeading !== lastSection
+                  lastSection = it.sectionHeading
+                  return (
+                    <React.Fragment key={it.id}>
+                      {showHeading && <h5 className="doc-subheading2">{it.sectionHeading}</h5>}
+                      <div className="doc-bullet">{it.text || '—'}</div>
+                    </React.Fragment>
+                  )
+                })}
+              </div>
+            )
+          })}
+        </div>
+      )}
 
       {/* Nuvho Pty Ltd (Company Name + About — Settings → Region Settings) */}
       <div className="doc-page" id="doc-section-nuvho">
@@ -143,68 +175,64 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         </p>
       </div>
 
-      {/* Fee Structure */}
-      <div className="doc-page" id="doc-section-fees">
-        <h3 className="doc-heading">Fee Structure</h3>
-        <p>
-          The following table outlines the associated fee structure of our services. Our fees exclude GST, which
-          will be charged in addition where applicable.
-        </p>
-        {model.services.length === 0 ? (
-          <p className="doc-empty">No pricing configured yet.</p>
-        ) : (
-          <>
-            <table className="doc-fee-table">
-              <thead>
-                <tr><th>Component</th><th>Fee Type</th><th>Amount</th><th>Months</th><th>Note</th></tr>
-              </thead>
-              <tbody>
-                {model.services.map(s => (
-                  <React.Fragment key={s.code}>
-                    {multiSvc && (
-                      <tr className="doc-fee-table__group"><td colSpan={5}>{s.label}</td></tr>
-                    )}
-                    {s.feeRows.map(row => (
-                      <tr key={row.id}>
-                        <td>{row.component || '—'}</td>
-                        <td>{FEE_TYPES.find(f => f.value === row.feeType)?.label || row.feeType}</td>
-                        <td>{row.fee === '' ? '—' : `${model.currencySymbol}${Number(row.fee).toLocaleString()}`}</td>
-                        <td>{row.term === '' ? '—' : row.term}</td>
-                        <td>{row.note || ''}</td>
-                      </tr>
-                    ))}
-                  </React.Fragment>
-                ))}
-              </tbody>
-            </table>
-            {model.grandTotalMonthly > 0 && (
-              <div className="doc-fee-total">Combined monthly total: {model.currencySymbol}{model.grandTotalMonthly.toLocaleString()}</div>
-            )}
-            {model.footnotes.length > 0 && (
-              <ul className="doc-footnotes">
-                {model.footnotes.map(f => <li key={f.id}>{f.text}</li>)}
-              </ul>
-            )}
-          </>
-        )}
-      </div>
-
-      {/* Quote Approval */}
-      <div className="doc-page" id="doc-section-approval">
-        <h3 className="doc-heading">Quote Approval</h3>
-        {model.signatureMessage?.trim() ? (
-          // Staff-authored rich-text message (TinyMCE, wizard Signature step)
-          // takes the place of the default sentence when one has been set.
-          <div className="doc-signature-message" dangerouslySetInnerHTML={{ __html: model.signatureMessage }} />
-        ) : (
+      {/* Fee Structure — hidden together with Background and Scope of Works
+          whenever Services (Step 2) was skipped. */}
+      {showFees && (
+        <div className="doc-page" id="doc-section-fees">
+          <h3 className="doc-heading">Fee Structure</h3>
           <p>
-            Should the terms of this proposal be acceptable, please sign below and return the applicable service
-            agreement. This proposal remains valid for {model.validityDays} days from the date of issue.
+            The following table outlines the associated fee structure of our services. Our fees exclude GST, which
+            will be charged in addition where applicable.
           </p>
-        )}
-        {!model.signatureRequired ? (
-          <p className="doc-empty">No signature block requested for this proposal.</p>
-        ) : (
+          <table className="doc-fee-table">
+            <thead>
+              <tr><th>Component</th><th>Fee Type</th><th>Amount</th><th>Months</th><th>Note</th></tr>
+            </thead>
+            <tbody>
+              {model.services.map(s => (
+                <React.Fragment key={s.code}>
+                  {multiSvc && (
+                    <tr className="doc-fee-table__group"><td colSpan={5}>{s.label}</td></tr>
+                  )}
+                  {s.feeRows.map(row => (
+                    <tr key={row.id}>
+                      <td>{row.component || '—'}</td>
+                      <td>{FEE_TYPES.find(f => f.value === row.feeType)?.label || row.feeType}</td>
+                      <td>{row.fee === '' ? '—' : `${model.currencySymbol}${Number(row.fee).toLocaleString()}`}</td>
+                      <td>{row.term === '' ? '—' : row.term}</td>
+                      <td>{row.note || ''}</td>
+                    </tr>
+                  ))}
+                </React.Fragment>
+              ))}
+            </tbody>
+          </table>
+          {model.grandTotalMonthly > 0 && (
+            <div className="doc-fee-total">Combined monthly total: {model.currencySymbol}{model.grandTotalMonthly.toLocaleString()}</div>
+          )}
+          {model.footnotes.length > 0 && (
+            <ul className="doc-footnotes">
+              {model.footnotes.map(f => <li key={f.id}>{f.text}</li>)}
+            </ul>
+          )}
+        </div>
+      )}
+
+      {/* Quote Approval — hidden entirely when Signature Required (Step 8)
+          is off, rather than showing an empty-state sentence. */}
+      {showApproval && (
+        <div className="doc-page" id="doc-section-approval">
+          <h3 className="doc-heading">Quote Approval</h3>
+          {model.signatureMessage?.trim() ? (
+            // Staff-authored rich-text message (TinyMCE, wizard Signature step)
+            // takes the place of the default sentence when one has been set.
+            <div className="doc-signature-message" dangerouslySetInnerHTML={{ __html: model.signatureMessage }} />
+          ) : (
+            <p>
+              Should the terms of this proposal be acceptable, please sign below and return the applicable service
+              agreement. This proposal remains valid for {model.validityDays} days from the date of issue.
+            </p>
+          )}
           <div className="doc-signature">
             <div className="doc-signature__mark">
               {model.signatureMethod === 'draw'
@@ -220,26 +248,39 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
               {model.signatoryName}{model.signatoryTitle ? `, ${model.signatoryTitle}` : ''}
             </div>
           </div>
-        )}
 
-        {model.footerText && (
+          {model.footerText && (
+            <div className="doc-legal-footer">
+              {model.footerText.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Legal footer still needs to render somewhere even when Quote
+          Approval itself is hidden — it's generic company-registration
+          boilerplate, unrelated to whether a signature was required. */}
+      {!showApproval && model.footerText && (
+        <div className="doc-page">
           <div className="doc-legal-footer">
             {model.footerText.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Appendix — Terms & Conditions */}
-      <div className="doc-page" id="doc-section-appendix">
-        <h3 className="doc-heading">Appendix 1 – Terms &amp; Conditions</h3>
-        {model.clauses.length === 0 && <p className="doc-empty">No clauses selected.</p>}
-        {model.clauses.map(c => (
-          <div key={c.id} className="doc-clause">
-            <h5 className="doc-subheading2">{c.heading}</h5>
-            <p>{c.text}</p>
-          </div>
-        ))}
-      </div>
+      {/* Appendix — Terms & Conditions — hidden when Services (Step 2) was
+          skipped, or when the resolved entity has no clauses configured. */}
+      {showAppendix && (
+        <div className="doc-page" id="doc-section-appendix">
+          <h3 className="doc-heading">Appendix 1 – Terms &amp; Conditions</h3>
+          {model.clauses.map(c => (
+            <div key={c.id} className="doc-clause">
+              <h5 className="doc-subheading2">{c.heading}</h5>
+              <p>{c.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
 
       <style jsx>{`
         .doc-preview { background: var(--nv-surface-page); padding: 24px 0; border-radius: 12px; }
@@ -266,7 +307,8 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         .doc-cover__date  { color: rgba(255,255,255,0.7); font-size: 12px; }
 
         .doc-letterhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 16px; }
-        .doc-date    { font-size: 12px; color: var(--nv-text-muted); }
+        .doc-letterhead__logo { flex-shrink: 0; }
+        .doc-date    { font-size: 12px; color: var(--nv-text-muted); margin-top: 6px; }
         .doc-nuvho-address { font-size: 11.5px; color: var(--nv-text-muted); text-align: right; line-height: 1.5; }
         .doc-address { margin-bottom: 16px; }
         .doc-legal-footer {

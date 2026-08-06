@@ -27,6 +27,83 @@ export async function getAppOnlyGraphToken(env: Env): Promise<string> {
   return data.access_token as string
 }
 
+/**
+ * Sends an email via Microsoft Graph's app-only sendMail action — the
+ * Microsoft-recommended replacement for SMTP AUTH (which Microsoft is
+ * deprecating for Exchange Online) and the mechanism this codebase now uses
+ * instead of the Resend transactional-email API.
+ *
+ * Requires the SAME Azure AD app registration as getAppOnlyGraphToken(),
+ * but with the Mail.Send APPLICATION permission granted and admin-consented
+ * in Entra ID — Mail.Send is a separate permission from User.Read.All /
+ * Directory.Read.All (used for tenant user sync), so this will 403 with
+ * "Insufficient privileges" until that specific permission is added.
+ *
+ * `fromMailbox` must be a real mailbox in the tenant. An app-only Mail.Send
+ * token can, by default, send as ANY mailbox in the tenant — if that's
+ * broader than desired, restrict it tenant-side with an Exchange Online
+ * ApplicationAccessPolicy scoped to this app's client ID.
+ *
+ * Note: Graph's simple JSON sendMail payload has a practical message-size
+ * ceiling (attachments are base64-inlined in the request body — Microsoft
+ * recommends keeping the total request under ~4MB; large attachments need
+ * the separate upload-session API instead). Callers with big attachments
+ * should account for this rather than assume sendMail always succeeds.
+ */
+export async function sendMailViaGraph(
+  env: Env,
+  fromMailbox: string,
+  mail: {
+    subject: string
+    html: string
+    to: string[]
+    cc?: string[]
+    bcc?: string[]
+    replyTo?: string
+    attachments?: { filename: string; contentType: string; contentBase64: string }[]
+  }
+): Promise<void> {
+  const accessToken = await getAppOnlyGraphToken(env)
+
+  const asRecipient = (address: string) => ({ emailAddress: { address } })
+
+  const message: Record<string, unknown> = {
+    subject: mail.subject,
+    body: { contentType: 'HTML', content: mail.html },
+    toRecipients: mail.to.map(asRecipient),
+  }
+  if (mail.cc?.length)  message.ccRecipients  = mail.cc.map(asRecipient)
+  if (mail.bcc?.length) message.bccRecipients = mail.bcc.map(asRecipient)
+  if (mail.replyTo)     message.replyTo = [asRecipient(mail.replyTo)]
+  if (mail.attachments?.length) {
+    message.attachments = mail.attachments.map(a => ({
+      '@odata.type': '#microsoft.graph.fileAttachment',
+      name:          a.filename,
+      contentType:   a.contentType || 'application/octet-stream',
+      contentBytes:  a.contentBase64,
+    }))
+  }
+
+  const res = await fetch(
+    `https://graph.microsoft.com/v1.0/users/${encodeURIComponent(fromMailbox)}/sendMail`,
+    {
+      method: 'POST',
+      headers: {
+        Authorization:  `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ message, saveToSentItems: true }),
+    }
+  )
+
+  // Graph returns 202 Accepted with an empty body on success — there is no
+  // JSON to parse either way, so only branch on status for the error path.
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`Graph sendMail error ${res.status}: ${detail || 'no detail'}`)
+  }
+}
+
 export interface GraphUser {
   id:                string
   displayName:       string

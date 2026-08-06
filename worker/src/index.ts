@@ -11,6 +11,7 @@ import {
   getProposal,
   createProposal,
   sendProposal,
+  resendProposal,
   updateProposal,
   deleteProposal,
   getDashboardStats,
@@ -264,6 +265,13 @@ async function route(
   const sendMatch = path.match(/^\/proposals\/([A-Z0-9]+)\/send$/)
   if (sendMatch && method === 'POST') {
     return sendProposal(sendMatch[1], env, session)
+  }
+
+  // Resend proposal email — re-sends the signing-link email for a proposal
+  // that's already gone out, optionally with edited To/CC/BCC recipients.
+  const resendMatch = path.match(/^\/proposals\/([A-Z0-9]+)\/resend$/)
+  if (resendMatch && method === 'POST') {
+    return resendProposal(resendMatch[1], request, env, session)
   }
 
   // Attachments (wizard Step 5 — Sender) — upload a file to an existing

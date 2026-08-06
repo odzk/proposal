@@ -9,6 +9,7 @@ import {
   type RegistryServiceLine, type RegistryProposalStatus,
 } from '../lib/registry'
 import { formatNpIdLocal } from '../lib/npId'
+import { sendMailViaGraph } from '../lib/graph'
 
 /* ─── List proposals ───────────────────────────────────────── */
 export async function listProposals(request: Request, env: Env, session: Session): Promise<Response> {
@@ -72,8 +73,9 @@ async function attachServiceChildren(env: Env, services: ServiceRow[]) {
 function mapTermsRow(termsRow: TermsRow | null) {
   if (!termsRow) return null
   return {
-    clauses:            JSON.parse(termsRow.clauses_json || '[]'),
-    validityDays:       termsRow.validity_days,
+    clauses:              JSON.parse(termsRow.clauses_json || '[]'),
+    validityDays:         termsRow.validity_days,
+    governingEntityCode:  termsRow.governing_entity_code || '',
     signatureRequired:  !!termsRow.signature_required,
     signatureMethod:    termsRow.signature_method || 'type',
     signatoryName:      termsRow.signatory_name || '',
@@ -128,11 +130,15 @@ export async function getProposal(proposalId: string, env: Env, session: Session
 /* ─── Create proposal ──────────────────────────────────────── */
 export async function createProposal(request: Request, env: Env, session: Session): Promise<Response> {
   const body = await request.json() as any
-  const { hotel, services, sender, cover, regionSettings } = body
+  const { hotel, sender, cover, regionSettings } = body
+  // Services are optional — the wizard's Services/Scope/Pricing steps are
+  // explicitly skippable (SKIPPABLE_STEPS in the frontend), so a proposal
+  // with zero service lines must still be creatable. Default to [] rather
+  // than requiring at least one.
+  const services: any[] = Array.isArray(body.services) ? body.services : []
 
   if (!hotel?.name)         return err('Hotel name required')
   if (!hotel?.contactEmail) return err('Contact email required')
-  if (!services?.length)    return err('At least one service required')
   if (!sender?.staffId)     return err('Sender staff required')
   if (!hotel?.hgid)         return err('Hotel group (select from registry lookup) required')
   if (!hotel?.entityCode)   return err('Entity code (resolved from the selected hotel group) required')
@@ -166,8 +172,8 @@ export async function createProposal(request: Request, env: Env, session: Sessio
       id, np_id, hotel_name, contact_name, contact_email, contact_phone, contact_title,
       property_address, region, nuvho_address, company_name, about_nuvho, footer_text, currency,
       status, sender_staff_id, account_manager_stf_id, sender_message, sender_cc, sender_bcc,
-      cover_url, hubspot_deal_id, signing_token, expires_at, valid_until
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      sender_subject, cover_url, hubspot_deal_id, signing_token, expires_at, valid_until
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).bind(
     proposalId, npId,
     hotel.name, hotel.contactName, hotel.contactEmail,
@@ -178,6 +184,7 @@ export async function createProposal(request: Request, env: Env, session: Sessio
     regionSettings?.currency || 'AUD',
     sender.staffId, sender.accountManagerId || null, sender.message || null,
     sender.cc || null, sender.bcc || null,
+    sender.subject || null,
     cover?.coverUrl || null, hotel.hubspotDealId || null,
     signingToken, expiresAt, expiresAt,
   ).run()
@@ -323,8 +330,12 @@ export async function deleteProposal(proposalId: string, env: Env, session: Sess
  * wizard's Save Draft / Generate & Send calls createProposal(), so the
  * frontend defers upload of newly-picked files until then). */
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024   // 10MB per file
-const MAX_ATTACHMENTS      = 5                  // per proposal — keeps the combined
-                                                 // Resend email payload well under its request-size limit
+const MAX_ATTACHMENTS      = 5                  // per proposal
+// NOTE: these limits pre-date the Graph sendMail migration and can combine
+// to a payload (5 files × 10MB, base64-inlined) well past Graph's ~4MB
+// practical ceiling for the simple JSON sendMail call — see the size-limit
+// note on sendMailViaGraph() in lib/graph.ts. Large multi-attachment sends
+// may need to move to Graph's upload-session API; not yet done here.
 
 export async function uploadAttachment(
   proposalId: string, request: Request, env: Env, session: Session
@@ -394,9 +405,9 @@ export async function deleteAttachment(
 /* Base64-encodes an ArrayBuffer in fixed-size chunks — spreading a whole
  * large Uint8Array into String.fromCharCode(...) at once can blow the call
  * stack, so this walks it 32KB at a time instead. Used by
- * sendProposalEmail() to inline attachment bytes for the Resend API, which
- * (like most transactional-email APIs) expects attachment content as base64
- * rather than as a separate multipart body. */
+ * sendProposalEmail() to inline attachment bytes as Graph fileAttachment
+ * contentBytes, which (like most email APIs) expects attachment content as
+ * base64 rather than as a separate multipart body. */
 function arrayBufferToBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer)
   let binary = ''
@@ -423,10 +434,22 @@ export async function sendProposal(proposalId: string, env: Env, session: Sessio
     pdf_url = ?, updated_at = datetime('now') WHERE id = ?
   `).bind(pdfKey, proposalId).run()
 
-  // Send email
-  await sendProposalEmail(proposal, publicUrl, env)
+  // Send email — failures here must not roll back the status flip above
+  // (the proposal record is already the source of truth), but they must
+  // also not be swallowed silently, which is what let "sent" proposals go
+  // out with no email ever actually delivered. Surface the failure in both
+  // the audit log and the API response so staff can see it and use Resend.
+  let emailError: string | null = null
+  try {
+    await sendProposalEmail(proposal, publicUrl, env)
+  } catch (e) {
+    emailError = e instanceof Error ? e.message : 'Unknown email error'
+    console.error('[sendProposal] email send failed:', proposalId, emailError)
+  }
 
-  await auditLog(env, proposalId, 'sent', session.email, { to: proposal.contact_email })
+  await auditLog(env, proposalId, 'sent', session.email, {
+    to: proposal.contact_email, ...(emailError ? { emailError } : {}),
+  })
 
   // Sync status to every linked registry proposal record (best-effort)
   await syncRegistryStatus(env, proposalId, 'sent', { sent_at: new Date().toISOString() })
@@ -437,7 +460,57 @@ export async function sendProposal(proposalId: string, env: Env, session: Sessio
     ctx.waitUntil(triggerAutomations(proposalId, 'sent', env))
   }
 
-  return ok({ status: 'sent', publicUrl })
+  return ok({
+    status: 'sent', publicUrl, emailSent: !emailError,
+    ...(emailError ? { emailError } : {}),
+  })
+}
+
+/* ─── Resend proposal email ──────────────────────────────────
+ * Re-sends the signing-link email for a proposal that has already gone out
+ * at least once. Lets staff override/extend the To/CC/BCC recipients for
+ * just this send (e.g. looping in an extra stakeholder, or retrying after
+ * the original send silently failed) without re-running the full send flow
+ * or touching proposal status/sent_at. Whatever CC/BCC list is submitted is
+ * persisted back onto the proposal row — sender_cc/sender_bcc are already
+ * staff-editable post-send (see ALWAYS_ALLOWED_FIELDS in updateProposal) —
+ * so the next resend or edit view starts from the latest list. */
+export async function resendProposal(
+  proposalId: string, request: Request, env: Env, session: Session
+): Promise<Response> {
+  const proposal = await env.DB.prepare('SELECT * FROM proposals WHERE id = ?')
+    .bind(proposalId).first<ProposalRow>()
+  if (!proposal) return err('Proposal not found', 404)
+  if (!proposal.signing_token) return err('Proposal has not been sent yet', 409)
+
+  const body = await request.json().catch(() => ({})) as { to?: string; cc?: string; bcc?: string }
+  const to  = (body.to ?? proposal.contact_email ?? '').trim()
+  const cc  = (body.cc  ?? proposal.sender_cc  ?? '') || ''
+  const bcc = (body.bcc ?? proposal.sender_bcc ?? '') || ''
+  if (!to) return err('At least one recipient (To) is required')
+
+  const publicUrl = `${env.FRONTEND_URL}/p/${proposal.signing_token}`
+
+  try {
+    await sendProposalEmail(proposal, publicUrl, env, { to, cc, bcc })
+  } catch (e) {
+    const message = e instanceof Error ? e.message : 'Unknown email error'
+    await auditLog(env, proposalId, 'resend_failed', session.email, { to, cc, bcc, error: message })
+    return err(`Failed to send email: ${message}`, 502)
+  }
+
+  // Best-effort — a failure to persist the recipient list shouldn't make an
+  // otherwise-successful resend look like it failed.
+  try {
+    await env.DB.prepare(
+      `UPDATE proposals SET sender_cc = ?, sender_bcc = ?, updated_at = datetime('now') WHERE id = ?`
+    ).bind(cc || null, bcc || null, proposalId).run()
+  } catch (e) {
+    console.error('[resendProposal] failed to persist cc/bcc:', proposalId, e)
+  }
+
+  await auditLog(env, proposalId, 'resent', session.email, { to, cc, bcc })
+  return ok({ resent: true, to, cc, bcc })
 }
 
 /* ─── Update proposal ──────────────────────────────────────── */
@@ -449,10 +522,10 @@ export async function sendProposal(proposalId: string, env: Env, session: Sessio
 const FULL_EDIT_FIELDS = [
   'hotel_name', 'contact_name', 'contact_email', 'contact_phone', 'contact_title',
   'property_address', 'region', 'nuvho_address', 'company_name', 'about_nuvho', 'footer_text', 'currency',
-  'sender_staff_id', 'account_manager_stf_id', 'sender_message', 'sender_cc', 'sender_bcc', 'cover_url',
+  'sender_staff_id', 'account_manager_stf_id', 'sender_message', 'sender_cc', 'sender_bcc', 'sender_subject', 'cover_url',
   'hubspot_deal_id',
 ]
-const ALWAYS_ALLOWED_FIELDS = ['sender_message', 'sender_cc', 'sender_bcc', 'cover_url', 'hubspot_deal_id']
+const ALWAYS_ALLOWED_FIELDS = ['sender_message', 'sender_cc', 'sender_bcc', 'sender_subject', 'cover_url', 'hubspot_deal_id']
 
 export async function updateProposal(
   proposalId: string, request: Request, env: Env, session: Session
@@ -646,8 +719,9 @@ export async function signProposal(token: string, request: Request, env: Env): P
     .bind(proposal.id).first<TermsRow>()
   const existingTerms = mapTermsRow(existingTermsRow ?? null)
   await upsertTerms(env, proposal.id, {
-    clauses:           existingTerms?.clauses ?? [],
-    validityDays:      existingTerms?.validityDays ?? 30,
+    clauses:             existingTerms?.clauses ?? [],
+    validityDays:        existingTerms?.validityDays ?? 30,
+    governingEntityCode: existingTerms?.governingEntityCode ?? '',
     signatureRequired: true,
     signatureMethod,
     signatoryName,
@@ -788,22 +862,24 @@ async function insertServiceChildren(env: Env, serviceRowId: string, svc: any): 
 async function upsertTerms(env: Env, proposalId: string, terms: any): Promise<void> {
   if (!terms) return
   await env.DB.prepare(`
-    INSERT INTO proposal_terms (proposal_id, clauses_json, validity_days, signature_required, signature_method, signatory_name, signatory_title, signature_data_url, signature_message, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+    INSERT INTO proposal_terms (proposal_id, clauses_json, validity_days, governing_entity_code, signature_required, signature_method, signatory_name, signatory_title, signature_data_url, signature_message, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
     ON CONFLICT(proposal_id) DO UPDATE SET
-      clauses_json       = excluded.clauses_json,
-      validity_days      = excluded.validity_days,
-      signature_required = excluded.signature_required,
-      signature_method   = excluded.signature_method,
-      signatory_name     = excluded.signatory_name,
-      signatory_title    = excluded.signatory_title,
-      signature_data_url = excluded.signature_data_url,
-      signature_message  = excluded.signature_message,
-      updated_at         = datetime('now')
+      clauses_json          = excluded.clauses_json,
+      validity_days         = excluded.validity_days,
+      governing_entity_code = excluded.governing_entity_code,
+      signature_required    = excluded.signature_required,
+      signature_method      = excluded.signature_method,
+      signatory_name        = excluded.signatory_name,
+      signatory_title       = excluded.signatory_title,
+      signature_data_url    = excluded.signature_data_url,
+      signature_message     = excluded.signature_message,
+      updated_at            = datetime('now')
   `).bind(
     proposalId,
     JSON.stringify(terms.clauses || []),
     terms.validityDays || 30,
+    terms.governingEntityCode || null,
     terms.signatureRequired === false ? 0 : 1,
     terms.signatureMethod === 'draw' ? 'draw' : 'type',
     terms.signatoryName || null,
@@ -821,8 +897,15 @@ async function auditLog(
   ).bind(ulid(), proposalId, event, actor, meta ? JSON.stringify(meta) : null).run()
 }
 
-async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: Env) {
-  // Uses Resend API (Mailchannels fallback)
+async function sendProposalEmail(
+  proposal: ProposalRow, publicUrl: string, env: Env,
+  overrides?: { to?: string; cc?: string; bcc?: string }
+) {
+  // Sends via Microsoft Graph app-only sendMail (see lib/graph.ts) — the
+  // organization's own Microsoft 365 tenant, replacing the previous Resend
+  // integration (retired: Resend required a separate API key/domain setup
+  // this account never actually had, which is why sends were silently
+  // failing with a 401 before this migration).
   const sender = await env.DB.prepare('SELECT name, email FROM staff WHERE id = ?')
     .bind(proposal.sender_staff_id).first<{ name: string; email: string }>()
 
@@ -856,26 +939,32 @@ async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: 
     </div>
   `
 
-  // sender_cc/sender_bcc are comma-separated strings from the wizard's
-  // Sender step (Step 5) — split into arrays for Resend, dropping blanks.
-  const splitEmails = (value: string | null) =>
+  // sender_cc/sender_bcc (and now optionally an overridden `to`) are
+  // comma-separated strings — split into arrays of addresses, dropping blanks.
+  const splitEmails = (value: string | null | undefined) =>
     (value || '').split(',').map(e => e.trim()).filter(Boolean)
-  const cc  = splitEmails(proposal.sender_cc)
-  const bcc = splitEmails(proposal.sender_bcc)
+  const to  = splitEmails(overrides?.to)
+  const cc  = splitEmails(overrides?.cc  ?? proposal.sender_cc)
+  const bcc = splitEmails(overrides?.bcc ?? proposal.sender_bcc)
 
   // Attachments (wizard Step 5 — Sender) — pull bytes from R2 and inline as
-  // base64 for Resend's `attachments` field. Best-effort per file: a single
-  // missing/unreadable R2 object shouldn't block the whole proposal send.
+  // base64 fileAttachments for the Graph sendMail payload. Best-effort per
+  // file: a single missing/unreadable R2 object shouldn't block the whole
+  // proposal send.
   const { results: attachmentRows } = await env.DB.prepare(
     'SELECT filename, content_type, r2_key FROM proposal_attachments WHERE proposal_id = ? ORDER BY sort_order'
   ).bind(proposal.id).all<Pick<AttachmentRow, 'filename' | 'content_type' | 'r2_key'>>()
 
-  const attachments: { filename: string; content: string }[] = []
+  const attachments: { filename: string; contentType: string; contentBase64: string }[] = []
   for (const row of attachmentRows) {
     try {
       const obj = await env.STORAGE.get(row.r2_key)
       if (!obj) { console.error('[Attachment] R2 object missing:', row.r2_key); continue }
-      attachments.push({ filename: row.filename, content: arrayBufferToBase64(await obj.arrayBuffer()) })
+      attachments.push({
+        filename:     row.filename,
+        contentType:  row.content_type || 'application/octet-stream',
+        contentBase64: arrayBufferToBase64(await obj.arrayBuffer()),
+      })
     } catch (e) {
       console.error('[Attachment] failed to read from R2:', row.r2_key, e)
     }
@@ -884,28 +973,29 @@ async function sendProposalEmail(proposal: ProposalRow, publicUrl: string, env: 
   // NUVCL-79: send from the individual sender's own @nuvho.com address
   // (not a shared/group address) for personalization. Falls back to
   // proposals@nuvho.com only if the sender's staff record has no email on
-  // file. This relies on nuvho.com being domain-verified in Resend (not a
-  // single verified sender) — true today since proposals@nuvho.com already
-  // sends successfully — so any @nuvho.com from-address is deliverable
-  // without new secrets or per-user credentials.
+  // file. Unlike the old Resend setup (which only needed the domain
+  // verified), the app-only Graph token must actually be allowed to send
+  // AS this mailbox — by default an app-only Mail.Send grant can send as
+  // any tenant mailbox, but if an ApplicationAccessPolicy has been applied
+  // to scope it down, both the individual sender addresses and this
+  // proposals@nuvho.com fallback need to be included in that policy.
   const fromEmail = sender?.email || 'proposals@nuvho.com'
 
-  await fetch('https://api.resend.com/emails', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${env.RESEND_API_KEY}`,
-      'Content-Type':  'application/json',
-    },
-    body: JSON.stringify({
-      from:    `${sender?.name || 'Nuvho Team'} <${fromEmail}>`,
-      to:      [proposal.contact_email],
-      ...(sender?.email      ? { reply_to: sender.email } : {}),
-      ...(cc.length          ? { cc }          : {}),
-      ...(bcc.length         ? { bcc }         : {}),
-      ...(attachments.length ? { attachments } : {}),
-      subject: `Your Nuvho Proposal — ${proposal.hotel_name}`,
-      html,
-    }),
+  // This call was previously fire-and-forget against Resend — a bad/missing
+  // API key, an unverified sender, or a malformed payload would fail and
+  // nobody would know: the proposal already shows status='sent' regardless
+  // (see sendProposal), so the failure was completely invisible.
+  // sendMailViaGraph() throws on any non-2xx Graph response, and that
+  // throw is left uncaught here so the caller (sendProposal/resendProposal)
+  // can log it, record it in the audit trail, and surface it to staff.
+  await sendMailViaGraph(env, fromEmail, {
+    subject: proposal.sender_subject || `Your Nuvho Proposal — ${proposal.hotel_name}`,
+    html,
+    to: to.length ? to : [proposal.contact_email],
+    ...(cc.length          ? { cc }              : {}),
+    ...(bcc.length         ? { bcc }             : {}),
+    ...(sender?.email      ? { replyTo: sender.email } : {}),
+    ...(attachments.length ? { attachments }     : {}),
   })
 }
 

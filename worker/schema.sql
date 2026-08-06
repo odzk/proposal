@@ -50,6 +50,11 @@ CREATE TABLE IF NOT EXISTS proposals (
   -- sendProposalEmail(); NULL/empty means no extra recipients.
   sender_cc            TEXT,
   sender_bcc           TEXT,
+  -- Email subject line for the proposal-sent email (wizard Step 5 — Sender).
+  -- NULL/empty falls back to the default "Your Nuvho Proposal — {hotel_name}"
+  -- (see sendProposalEmail() in routes/proposals.ts). Added to an already-
+  -- deployed database via migrations/0010_proposal_sender_subject.sql.
+  sender_subject       TEXT,
   cover_url            TEXT,
   pdf_url              TEXT,
   signed_pdf_url       TEXT,
@@ -163,6 +168,10 @@ CREATE TABLE IF NOT EXISTS proposal_terms (
   proposal_id         TEXT PRIMARY KEY REFERENCES proposals(id) ON DELETE CASCADE,
   clauses_json        TEXT NOT NULL DEFAULT '[]',
   validity_days       INTEGER NOT NULL DEFAULT 30,
+  -- Registry entity_code (e.g. NVH-AU-OPS) this agreement is governed by —
+  -- selected on the wizard's Step 7 Governing Entity picker. Added to an
+  -- already-deployed database via migrations/0009_proposal_terms_governing_entity.sql.
+  governing_entity_code TEXT,
   signature_required  INTEGER NOT NULL DEFAULT 1,
   -- 'type' (signatory name rendered in a script font) or 'draw' (hand-drawn
   -- on a <canvas>, captured as a PNG data URL in signature_data_url below).

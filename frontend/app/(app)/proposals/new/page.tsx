@@ -9,7 +9,7 @@ import type {
 } from '@/lib/types'
 import {
   getServiceLabel, getServiceColor, FEE_TYPES, REGION_META, initScopeItems, initFeeRows,
-  initFootnotes, initTerms, defaultTermsClauses, generateRowId, deriveFeeSummary,
+  initFootnotes, initTerms, generateRowId, deriveFeeSummary,
 } from '@/lib/serviceCatalog'
 import { buildDocModelFromDraft, downloadBlob } from '@/lib/documentModel'
 import { ProposalDocument } from '@/components/proposal/ProposalDocument'
@@ -45,7 +45,7 @@ const EMPTY_DRAFT: ProposalDraft = {
   },
   regionSettings: { address: '', companyName: '', aboutNuvho: '', footerText: '', currency: REGION_META.au.currency },
   services:     [],
-  sender:       { staffId: '', accountManagerId: '', message: '', cc: '', bcc: '' },
+  sender:       { staffId: '', accountManagerId: '', subject: '', message: '', cc: '', bcc: '' },
   cover:        { coverUrl: '' },
   terms:        initTerms('au'),
   preview:      { recipientEmail: '' },
@@ -141,6 +141,94 @@ export default function NewProposalPage() {
     return () => { cancelled = true }
   }, [])
 
+  // Legal entities (Nuvho Master Registry, same data Settings → Entities
+  // lists) — used by Step 7's Governing Entity picker. Fetched once here
+  // (not inside Step7Terms) for the same reason as regionSettingsMap/
+  // serviceCategories above: the step component unmounts on every step
+  // change, which would otherwise drop an in-flight fetch. Same
+  // /registry/entities endpoint the Step 1 "Add Hotel Group"/"Sync to
+  // Registry" flows already call further down this file.
+  const [entities, setEntities]               = useState<RegistryEntity[]>([])
+  const [entitiesLoading, setEntitiesLoading] = useState(true)
+
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/registry/entities`, { credentials: 'include' })
+        const data = await res.json()
+        if (!res.ok || cancelled) return
+        setEntities(data.data?.entities || [])
+      } catch { /* Step7Terms just shows an empty/loading select if this never resolves */ }
+      finally { if (!cancelled) setEntitiesLoading(false) }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  // Default Step 7's Governing Entity to the contracting entity chosen on
+  // Step 1 (draft.hotel.entityCode) once it's known — the two usually are
+  // the same entity, so this saves a redundant manual pick. Only fires
+  // while governingEntityCode is still unset, so it never clobbers a
+  // manual override on Step 7, or a value already loaded from a saved
+  // proposal in edit mode (the editId effect above sets both at once).
+  React.useEffect(() => {
+    if (!draft.hotel.entityCode || draft.terms.governingEntityCode) return
+    setDraft(d => d.terms.governingEntityCode ? d : {
+      ...d, terms: { ...d.terms, governingEntityCode: d.hotel.entityCode },
+    })
+  }, [draft.hotel.entityCode, draft.terms.governingEntityCode])
+
+  // Entity Settings (Settings → Entities) — each entity's own Terms &
+  // Conditions clauses (entity_settings.clauses_json), merged in by the
+  // worker's getEntitySettings(). Keyed by entity_code so the effect below
+  // can pull the Governing Entity's own clauses instead of a generic
+  // regional fallback. Fetched once here for the same "don't drop an
+  // in-flight fetch when a step unmounts" reason as entities/
+  // regionSettingsMap above.
+  const [entitySettingsMap, setEntitySettingsMap] = useState<Record<string, { clauses: TermsClause[] }> | null>(null)
+
+  React.useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/settings/entities`, { credentials: 'include' })
+        const data = await res.json()
+        if (!res.ok || cancelled) return
+        const map: Record<string, { clauses: TermsClause[] }> = {}
+        for (const e of (data.data as { entityCode: string; clauses: TermsClause[] }[])) {
+          map[e.entityCode] = { clauses: e.clauses || [] }
+        }
+        setEntitySettingsMap(map)
+      } catch { /* the effect below falls back to an empty clause list */ }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  // Terms & Conditions clauses are entity-specific (Settings → Entities),
+  // not region-specific — whenever the Governing Entity resolves (Step 7's
+  // picker, or the auto-default from Step 1's entityCode above) or entity
+  // settings finish loading, replace draft.terms.clauses with that entity's
+  // own clauses. An entity with none configured — or no entity resolved at
+  // all, i.e. Step 7 effectively skipped — means an empty Appendix, not a
+  // generic filler set. Skipped entirely in edit mode, which already loaded
+  // the proposal's own saved clauses verbatim (the editId effect above).
+  React.useEffect(() => {
+    if (editId) return
+    if (!entitySettingsMap) return
+    const code = draft.terms.governingEntityCode
+    const clausesSrc = code ? (entitySettingsMap[code]?.clauses ?? []) : []
+    setDraft(d => ({
+      ...d,
+      terms: {
+        ...d.terms,
+        clauses: clausesSrc.map(c => ({
+          id: generateRowId('term'), heading: c.heading, text: c.text,
+          enabled: (c as Partial<TermsClause>).enabled ?? true,
+        })),
+      },
+    }))
+  }, [draft.terms.governingEntityCode, entitySettingsMap, editId])
+
   function applyRegionSettings(region: Region) {
     const rs = regionSettingsMap?.[region]
     const address     = rs?.address     ?? ''
@@ -148,12 +236,9 @@ export default function NewProposalPage() {
     const aboutNuvho  = rs?.aboutNuvho  ?? ''
     const footerText  = rs?.footerText  ?? ''
     const currency    = rs?.currency    ?? REGION_META[region].currency
-    const rawClauses = rs?.clauses?.length ? rs.clauses : defaultTermsClauses(region)
-    const clauses: TermsClause[] = rawClauses.map(c => ({
-      id: generateRowId('term'), heading: c.heading, text: c.text,
-      enabled: (c as Partial<TermsClause>).enabled ?? true,
-    }))
-    setDraft(d => ({ ...d, regionSettings: { address, companyName, aboutNuvho, footerText, currency }, terms: { ...d.terms, clauses } }))
+    // Clauses are no longer applied from here — they're entity-specific now
+    // (see the entitySettingsMap effect above), not region-specific.
+    setDraft(d => ({ ...d, regionSettings: { address, companyName, aboutNuvho, footerText, currency } }))
   }
 
   // Apply once for the default region on a brand-new proposal only — editing
@@ -225,6 +310,7 @@ export default function NewProposalPage() {
           sender:  {
             staffId: p.sender_staff_id || '',
             accountManagerId: p.account_manager_stf_id || '',
+            subject: p.sender_subject || '',
             message: p.sender_message || '',
             cc:  p.sender_cc || '',
             bcc: p.sender_bcc || '',
@@ -353,6 +439,7 @@ export default function NewProposalPage() {
           currency:         draft.regionSettings.currency,
           sender_staff_id:  draft.sender.staffId,
           account_manager_stf_id: draft.sender.accountManagerId || null,
+          sender_subject:   draft.sender.subject,
           sender_message:   draft.sender.message,
           sender_cc:        draft.sender.cc,
           sender_bcc:       draft.sender.bcc,
@@ -545,7 +632,8 @@ export default function NewProposalPage() {
             <Step6Cover draft={draft} setDraft={setDraft} errors={errors} />
           )}
           {step === 7 && (
-            <Step7Terms draft={draft} setDraft={setDraft} errors={errors} />
+            <Step7Terms draft={draft} setDraft={setDraft} errors={errors}
+              entities={entities} entitiesLoading={entitiesLoading} />
           )}
           {step === 8 && (
             <Step8Signature draft={draft} setDraft={setDraft} errors={errors} />
@@ -591,7 +679,7 @@ export default function NewProposalPage() {
                     disabled={saving || savingDraft}
                     aria-busy={saving}
                   >
-                    {saving ? 'Generating…' : 'Generate & Send Proposal'}
+                    {saving ? 'Generating…' : 'Generate & Send Document'}
                   </button>
                 </div>}
           </div>
@@ -2305,6 +2393,13 @@ function Step5Sender({
           </select>
         </FormField>
 
+        <FormField label="Subject" error={errors.subject} span={2}>
+          <input className="nv-input" type="text"
+            placeholder={`Your Nuvho Proposal — ${draft.hotel.name || '[Hotel Name]'}`}
+            value={draft.sender.subject}
+            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, subject: e.target.value } }))} />
+        </FormField>
+
         <FormField label="CC (comma-separated)" error={errors.cc}>
           <input className="nv-input" type="text"
             placeholder="e.g. manager@nuvho.com, partner@example.com"
@@ -2480,10 +2575,8 @@ function Step6Cover({ draft, setDraft, errors }: StepProps) {
 }
 
 /* ─── Step 7: Terms & Conditions ─── */
-function Step7Terms({ draft, setDraft, errors }: StepProps) {
+function Step7Terms({ draft, setDraft, errors, entities = [], entitiesLoading }: StepProps) {
   const terms = draft.terms
-  const region = draft.hotel.region
-  const govLaw = REGION_META[region].govLaw
 
   function updateTerms(next: Partial<typeof terms>) {
     setDraft(d => ({ ...d, terms: { ...d.terms, ...next } }))
@@ -2508,8 +2601,17 @@ function Step7Terms({ draft, setDraft, errors }: StepProps) {
             value={terms.validityDays}
             onChange={e => updateTerms({ validityDays: +e.target.value })} />
         </FormField>
-        <FormField label="Governing Region">
-          <input className="nv-input" value={govLaw} readOnly disabled />
+        <FormField label="Governing Entity" error={errors.governingEntityCode}>
+          <select className="nv-input" value={terms.governingEntityCode}
+            onChange={e => updateTerms({ governingEntityCode: e.target.value })}
+            disabled={entitiesLoading}>
+            <option value="">{entitiesLoading ? 'Loading entities…' : 'Select an entity…'}</option>
+            {entities.map(en => (
+              <option key={en.entity_code} value={en.entity_code}>
+                {en.legal_name} ({en.entity_code})
+              </option>
+            ))}
+          </select>
         </FormField>
       </div>
 
@@ -2891,6 +2993,10 @@ interface StepProps {
   // rather than the (possibly stale, code-only) fallback.
   serviceCategories?: ServiceCategory[]
   serviceCategoriesLoading?: boolean
+  // Only used by Step7Terms's Governing Entity picker — see the entities/
+  // entitiesLoading state comment in NewProposalPage.
+  entities?: RegistryEntity[]
+  entitiesLoading?: boolean
   // Only used by Step5Sender — attachment picker state/handlers. See the
   // pendingAttachments/existingAttachments state comment in
   // NewProposalPage for why uploads are deferred until a proposal id exists.

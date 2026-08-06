@@ -40,6 +40,17 @@ export default function ProposalDetailPage() {
   const [showDoc,  setShowDoc]  = useState(false)
   const [exporting, setExporting] = useState<'pdf' | 'word' | null>(null)
 
+  // Resend — lets staff re-send the signing-link email for a proposal
+  // that's already gone out, editing To/CC/BCC first (e.g. adding a
+  // stakeholder who was missed, or retrying after a failed send).
+  const [showResend,   setShowResend]   = useState(false)
+  const [resendTo,     setResendTo]     = useState('')
+  const [resendCc,     setResendCc]     = useState('')
+  const [resendBcc,    setResendBcc]    = useState('')
+  const [resending,    setResending]    = useState(false)
+  const [resendError,  setResendError]  = useState('')
+  const [resendNotice, setResendNotice] = useState('')
+
   async function copyToClipboard(text: string, which: 'id' | 'link') {
     try {
       if (navigator.clipboard && window.isSecureContext) {
@@ -95,6 +106,41 @@ export default function ProposalDetailPage() {
       alert('Failed to send: ' + e.message)
     } finally {
       setSending(false)
+    }
+  }
+
+  function openResendModal() {
+    setResendTo(proposal?.contact_email || '')
+    setResendCc(proposal?.sender_cc || '')
+    setResendBcc(proposal?.sender_bcc || '')
+    setResendError('')
+    setResendNotice('')
+    setShowResend(true)
+  }
+
+  async function handleResend() {
+    if (!resendTo.trim()) { setResendError('At least one recipient (To) is required'); return }
+    setResending(true)
+    setResendError('')
+    try {
+      const res = await fetch(`${WORKER}/proposals/${id}/resend`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ to: resendTo, cc: resendCc, bcc: resendBcc }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || 'Failed to resend proposal')
+      setProposal((p: any) => ({ ...p, sender_cc: resendCc, sender_bcc: resendBcc }))
+      setResendNotice(`Sent to ${resendTo}`)
+      // Refresh the activity log so the new "resent" entry shows up immediately.
+      fetch(`${WORKER}/proposals/${id}/audit`, { credentials: 'include' })
+        .then(r => r.json()).then(j => setAudit(j.data || [])).catch(() => {})
+      window.setTimeout(() => setShowResend(false), 1200)
+    } catch (e: any) {
+      setResendError(e.message)
+    } finally {
+      setResending(false)
     }
   }
 
@@ -251,8 +297,72 @@ export default function ProposalDetailPage() {
               View Public Page ↗
             </a>
           )}
+          {proposal.sent_at && (
+            <button
+              className="nv-btn nv-btn--outlined nv-btn--md"
+              onClick={openResendModal}
+            >
+              ↻ Resend
+            </button>
+          )}
         </div>
       </div>
+
+      {/* Resend modal */}
+      {showResend && (
+        <div className="resend-modal-overlay" onMouseDown={() => !resending && setShowResend(false)}>
+          <div className="resend-modal" onMouseDown={e => e.stopPropagation()}>
+            <div className="resend-modal__header">
+              <h3>Resend Proposal</h3>
+              <button type="button" className="resend-modal__close" aria-label="Close"
+                      onClick={() => setShowResend(false)}>
+                ×
+              </button>
+            </div>
+            <div className="resend-modal__body">
+              <p className="resend-modal__hint">
+                Re-sends the signing-link email for this proposal. Recipients below are
+                pre-filled from the original send — edit them to add or remove anyone
+                before sending.
+              </p>
+              <div className="resend-modal__field">
+                <label className="resend-modal__label">To *</label>
+                <input className="nv-input" value={resendTo}
+                       onChange={e => setResendTo(e.target.value)}
+                       placeholder="client@example.com" />
+              </div>
+              <div className="resend-modal__field">
+                <label className="resend-modal__label">CC</label>
+                <input className="nv-input" value={resendCc}
+                       onChange={e => setResendCc(e.target.value)}
+                       placeholder="comma-separated addresses" />
+              </div>
+              <div className="resend-modal__field">
+                <label className="resend-modal__label">BCC</label>
+                <input className="nv-input" value={resendBcc}
+                       onChange={e => setResendBcc(e.target.value)}
+                       placeholder="comma-separated addresses" />
+              </div>
+              {resendError && (
+                <p style={{ color: 'var(--nv-error)', fontSize: 13, margin: 0 }}>{resendError}</p>
+              )}
+              {resendNotice && (
+                <p style={{ color: 'var(--nv-success)', fontSize: 13, margin: 0 }}>✓ {resendNotice}</p>
+              )}
+            </div>
+            <div className="resend-modal__footer">
+              <button className="nv-btn nv-btn--outlined nv-btn--md"
+                      onClick={() => setShowResend(false)} disabled={resending}>
+                Cancel
+              </button>
+              <button className="nv-btn nv-btn--solid nv-btn--md"
+                      onClick={handleResend} disabled={resending}>
+                {resending ? 'Sending…' : 'Send'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 360px', gap: 24 }}>
         {/* Left column */}
@@ -456,6 +566,42 @@ export default function ProposalDetailPage() {
           </div>
         )}
       </div>
+
+      <style jsx>{`
+        .resend-modal-overlay {
+          position: fixed; inset: 0; background: rgba(15, 23, 32, 0.45);
+          display: flex; align-items: center; justify-content: center;
+          z-index: 1000; padding: 20px;
+        }
+        .resend-modal {
+          background: white; border-radius: 14px; width: 100%; max-width: 460px;
+          box-shadow: 0 20px 60px rgba(0,0,0,0.25); max-height: 90vh; overflow-y: auto;
+        }
+        .resend-modal__header {
+          display: flex; align-items: center; justify-content: space-between;
+          padding: 20px 24px; border-bottom: 1px solid var(--nv-border);
+        }
+        .resend-modal__header h3 {
+          margin: 0; font-size: 17px; font-family: var(--nv-font-display);
+          color: var(--nv-text-heading);
+        }
+        .resend-modal__close {
+          background: none; border: none; cursor: pointer; font-size: 22px;
+          line-height: 1; color: var(--nv-text-muted); padding: 0;
+        }
+        .resend-modal__close:hover { color: var(--nv-text-body); }
+        .resend-modal__body { padding: 20px 24px; display: flex; flex-direction: column; gap: 16px; }
+        .resend-modal__field { display: flex; flex-direction: column; gap: 6px; }
+        .resend-modal__label {
+          font-size: 12px; font-weight: 600; color: var(--nv-text-muted);
+          text-transform: uppercase; letter-spacing: 0.06em;
+        }
+        .resend-modal__hint { margin: 0; font-size: 12px; color: var(--nv-text-muted); line-height: 1.5; }
+        .resend-modal__footer {
+          display: flex; justify-content: flex-end; gap: 10px;
+          padding: 16px 24px; border-top: 1px solid var(--nv-border);
+        }
+      `}</style>
     </div>
   )
 }
