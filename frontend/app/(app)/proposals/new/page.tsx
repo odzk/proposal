@@ -28,7 +28,7 @@ const STEPS = [
   { id: 6, label: 'Cover Image'    },
   { id: 7, label: 'Terms'          },
   { id: 8, label: 'Signature'      },
-  { id: 9, label: 'Preview & Send' },
+  { id: 9, label: 'Preview & Save' },
 ]
 
 // Steps that offer a "Skip" control beside Continue — Services/Scope/Pricing
@@ -541,18 +541,14 @@ export default function NewProposalPage() {
     }
   }
 
+  // Per request: this step no longer sends — it only generates/saves the
+  // proposal. Sending now happens exclusively from the proposal's detail
+  // page (its Send button always confirms before sending, per NUVCL-99).
   async function handleSubmit() {
     setSaving(true)
     try {
       const id = await createDraftProposal()
       await uploadPendingAttachments(id)
-      const sendRes = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${id}/send`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-      })
-      const sendData = await sendRes.json()
-      if (!sendRes.ok) throw new Error(sendData.error || 'Proposal created but failed to send')
       router.push(`/proposals/${id}`)
     } catch (err: any) {
       setErrors({ submit: err.message })
@@ -605,7 +601,8 @@ export default function NewProposalPage() {
         <div className="nv-card wizard-card animate-fade-in-up">
           {step === 1 && (
             <Step1HotelDetails draft={draft} setDraft={setDraft} errors={errors} editId={editId}
-              applyRegionSettings={applyRegionSettings} />
+              applyRegionSettings={applyRegionSettings}
+              entities={entities} entitiesLoading={entitiesLoading} />
           )}
           {step === 2 && (
             <Step2Services draft={draft} setDraft={setDraft} errors={errors}
@@ -679,7 +676,7 @@ export default function NewProposalPage() {
                     disabled={saving || savingDraft}
                     aria-busy={saving}
                   >
-                    {saving ? 'Generating…' : 'Generate & Send Document'}
+                    {saving ? 'Generating…' : 'Generate Document'}
                   </button>
                 </div>}
           </div>
@@ -751,6 +748,10 @@ interface RegistryEntity {
   is_active: boolean
 }
 
+// Hides the Step 1 "Confidential" toggle per request, without deleting the
+// (already cosmetic-only, unwired) feature — flip back to true to restore it.
+const SHOW_CONFIDENTIAL_TOGGLE = false
+
 // Matches the Region type (lib/types.ts) and the wizard's own Region select.
 const REGION_OPTIONS: { value: Region; label: string }[] = [
   { value: 'au', label: 'Australia (AU)' },
@@ -765,6 +766,20 @@ const REGION_JURISDICTION_PREFIX: Record<Region, string> = {
   au: 'australia',
   uk: 'united kingdom',
   ie: 'ireland',
+}
+
+// NUVCL-97: Step 1's Governing Entity picker sets draft.hotel.region from
+// the chosen entity's jurisdiction, using the same prefix-matching
+// convention as REGION_JURISDICTION_PREFIX above (registry.entity_codes.
+// jurisdiction is free text like "Australia (QLD)", not a 2-letter code).
+// Returns null — rather than guessing — if a future entity's jurisdiction
+// doesn't match any of the three known prefixes.
+function regionFromJurisdiction(jurisdiction: string): Region | null {
+  const j = jurisdiction.trim().toLowerCase()
+  for (const region of Object.keys(REGION_JURISDICTION_PREFIX) as Region[]) {
+    if (j.startsWith(REGION_JURISDICTION_PREFIX[region])) return region
+  }
+  return null
 }
 
 // Hardcoded fallback for the Market picker — mirrors registry.market_codes
@@ -828,7 +843,7 @@ type CombinedResult =
   | { source: 'registry'; hg: RegistryHotelGroupSummary }
   | { source: 'hubspot';  hs: HubspotSearchResult }
 
-function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSettings }: StepProps) {
+function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSettings, entities = [], entitiesLoading }: StepProps) {
   const h = draft.hotel
   function update(key: string, val: string) {
     setDraft(d => ({ ...d, hotel: { ...d.hotel, [key]: val } }))
@@ -1291,38 +1306,66 @@ function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSetting
           <h2 className="step-title">Hotel Details</h2>
           <p className="step-desc">Enter the hotel and primary contact information.</p>
         </div>
-        <button
-          type="button"
-          className={`confidential-toggle ${confidential ? 'confidential-toggle--active' : ''}`}
-          onClick={() => setConfidential(c => !c)}
-          aria-pressed={confidential}
-        >
-          <span className="confidential-toggle__check">
-            {confidential && (
-              <svg width="9" height="9" viewBox="0 0 448 512" fill="white">
-                {/* nuvho-brand icon: check (duotone-thin) — same mark used by the
-                    step indicator's completed-step state above */}
-                <path d="M444.7 65.5c3.6 2.6 4.3 7.6 1.7 11.2l-288 392c-1.4 1.9-3.5 3.1-5.8 3.2s-4.6-.7-6.3-2.3l-144-144c-3.1-3.1-3.1-8.2 0-11.3s8.2-3.1 11.3 0L151.1 451.8 433.6 67.3c2.6-3.6 7.6-4.3 11.2-1.7z"/>
-              </svg>
-            )}
-          </span>
-          Confidential
-        </button>
+        {SHOW_CONFIDENTIAL_TOGGLE && (
+          <button
+            type="button"
+            className={`confidential-toggle ${confidential ? 'confidential-toggle--active' : ''}`}
+            onClick={() => setConfidential(c => !c)}
+            aria-pressed={confidential}
+          >
+            <span className="confidential-toggle__check">
+              {confidential && (
+                <svg width="9" height="9" viewBox="0 0 448 512" fill="white">
+                  {/* nuvho-brand icon: check (duotone-thin) — same mark used by the
+                      step indicator's completed-step state above */}
+                  <path d="M444.7 65.5c3.6 2.6 4.3 7.6 1.7 11.2l-288 392c-1.4 1.9-3.5 3.1-5.8 3.2s-4.6-.7-6.3-2.3l-144-144c-3.1-3.1-3.1-8.2 0-11.3s8.2-3.1 11.3 0L151.1 451.8 433.6 67.3c2.6-3.6 7.6-4.3 11.2-1.7z"/>
+                </svg>
+              )}
+            </span>
+            Confidential
+          </button>
+        )}
       </div>
 
-      {/* Region comes first — the account search below is scoped to it. */}
+      {/* Governing Entity comes first — the account search below is scoped
+          to its derived region. NUVCL-97: replaces the old plain AU/UK/IE
+          Region picker with the same Master Registry legal-entity list
+          Step 7's Governing Entity field already uses (entities/
+          entitiesLoading, fetched once in the parent NewProposalPage), so
+          Step 1 sets the real contracting Nuvho entity up front instead of
+          just a country — region/currency/market/jurisdiction downstream
+          are then derived from that entity rather than picked separately. */}
       <div className="form-grid">
-        <FormField label="Which Nuvho entity is the contracting party? *" error={errors.region} span={2}>
-          <select className="nv-input" value={h.region}
+        <FormField label="Governing Entity *" error={errors.region} span={2}>
+          <select className="nv-input" value={h.entityCode}
+            disabled={entitiesLoading}
             onChange={e => {
-              const region = e.target.value as Region
-              update('region', region)
+              const code = e.target.value
+              const entity = entities.find(en => en.entity_code === code)
+              // Fall back to the region already on the draft if this
+              // entity's jurisdiction doesn't match a known prefix, rather
+              // than silently defaulting to a wrong country.
+              const region = (entity && regionFromJurisdiction(entity.jurisdiction)) || h.region
+              // clearHotelGroup() resets entityCode to '' (a new governing
+              // entity invalidates any previously-linked hotel group, same
+              // as a region change used to) — it must run BEFORE we set the
+              // just-picked entityCode/region, not after, since sequential
+              // setDraft calls in this handler apply in order and a later
+              // reset would otherwise wipe the entity the user just chose.
               clearHotelGroup()
+              setDraft(d => ({ ...d, hotel: { ...d.hotel, entityCode: code, region } }))
               applyRegionSettings?.(region)
             }}>
-            <option value="au">Australia</option>
-            <option value="uk">United Kingdom</option>
-            <option value="ie">Ireland</option>
+            <option value="">{entitiesLoading ? 'Loading entities…' : 'Select the contracting Nuvho entity…'}</option>
+            {/* Shows every entity the registry returns (all 6 — holdco/
+                IP-holdco/processor entities included), matching Step 7's
+                Governing Entity picker exactly rather than narrowing to
+                is_data_controller entities only. */}
+            {entities.map(en => (
+              <option key={en.entity_code} value={en.entity_code}>
+                {en.legal_name} ({en.entity_code})
+              </option>
+            ))}
           </select>
         </FormField>
       </div>
@@ -2840,7 +2883,7 @@ function Step8Signature({ draft, setDraft, errors }: StepProps) {
   )
 }
 
-/* ─── Step 9: Preview & Send ─── */
+/* ─── Step 9: Preview & Save ─── */
 function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
   const total = draft.services.reduce((acc, s) => acc + s.monthlyFee * s.term + s.setupFee, 0)
   const model = buildDocModelFromDraft(draft, staff)
@@ -2866,8 +2909,8 @@ function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
 
   return (
     <div className="step-content">
-      <h2 className="step-title">Preview & Send</h2>
-      <p className="step-desc">Review proposal details and confirm before generating the PDF and sending.</p>
+      <h2 className="step-title">Preview & Save</h2>
+      <p className="step-desc">Review proposal details before generating the document. Sending happens afterwards, from the proposal's detail page.</p>
 
       <div className="preview-summary">
         <SummaryRow label="Hotel"    value={draft.hotel.name || '—'} />
@@ -2886,15 +2929,10 @@ function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
         <SummaryRow label="Custom message" value={draft.terms.signatureMessage?.trim() ? 'Added' : 'Not set'} />
       </div>
 
-      <FormField label="Send proposal to (confirm email) *" error={errors.recipientEmail}>
-        <input className="nv-input" type="email"
-          value={draft.preview.recipientEmail || draft.hotel.contactEmail}
-          onChange={e => setDraft(d => ({ ...d, preview: { ...d.preview, recipientEmail: e.target.value } }))} />
-      </FormField>
-
       <div className="preview-note">
-        Clicking <strong>Generate &amp; Send</strong> will:
-        create the proposal PDF · upload to R2 · send the email · trigger HubSpot / Asana automations.
+        Clicking <strong>Generate Document</strong> will create and save the proposal — it will
+        not be sent yet. Open it from the Proposals list afterwards to review, then use its
+        <strong> Send</strong> button (which always asks you to confirm) when you're ready to send it.
       </div>
 
       <div className="preview-doc-header">

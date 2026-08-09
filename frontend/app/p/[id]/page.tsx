@@ -252,21 +252,34 @@ export default function PublicProposalPage() {
         }
 
         .public-section { margin-bottom: 0; }
+        /* Heading styled to match <ProposalDocument>'s .doc-heading (NUVCL-98)
+           so "Accept This Proposal" reads as another section of the document
+           rather than a visually distinct widget. */
         .public-section-title {
           font-family: var(--font-comfortaa);
-          font-size: 22px;
+          font-size: 16px;
           font-weight: 700;
           color: var(--nv-text-heading);
-          margin-bottom: 20px;
+          margin-bottom: 12px;
+          padding-bottom: 8px;
+          border-bottom: 2px solid var(--nv-border-hair);
         }
 
-        /* Signing */
+        /* Signing — container styled to match <ProposalDocument>'s .doc-page
+           (NUVCL-98): same white card, 680px width, 40/48 padding, 4px
+           radius, and shadow-sm, so the signature box looks like the next
+           page of the proposal instead of a separate bordered widget. */
         .public-sign-section {
-          background: var(--nv-surface-card);
-          border: 1px solid var(--nv-border-hair);
-          border-radius: var(--nv-radius-md);
-          padding: 36px;
+          background: white;
+          max-width: 680px;
+          margin: 0 auto;
+          padding: 40px 48px;
+          border-radius: 4px;
           box-shadow: var(--nv-shadow-sm);
+          font-family: var(--font-raleway);
+        }
+        @media (max-width: 600px) {
+          .public-sign-section { padding: 28px 24px; }
         }
 
         .sign-fields {

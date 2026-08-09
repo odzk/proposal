@@ -215,8 +215,9 @@ export default function ProposalDetailPage() {
     <div style={{ padding: '32px', maxWidth: 960, margin: '0 auto' }}>
 
       {/* Header */}
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', marginBottom: 32 }}>
-        <div>
+      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between',
+                    flexWrap: 'wrap', gap: 16, marginBottom: 32 }}>
+        <div style={{ minWidth: 240 }}>
           <button
             onClick={() => router.push('/proposals')}
             style={{ background: 'none', border: 'none', cursor: 'pointer',
@@ -248,7 +249,7 @@ export default function ProposalDetailPage() {
             </span>
           </button>
         </div>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           <span className={`nv-badge ${STATUS_CLASSES[proposal.status] || ''}`}>
             {proposal.status}
           </span>
@@ -266,11 +267,23 @@ export default function ProposalDetailPage() {
           >
             {exporting === 'word' ? 'Preparing…' : '⬇ Word'}
           </button>
-          {canSend && (
-            <Link href={`/proposals/new?edit=${proposal.id}`}
-                  className="nv-btn nv-btn--outlined nv-btn--md">
-              ✎ Edit
-            </Link>
+          {/* NUVCL-99: Copy Link promoted from the "Signing Link" card at the
+              bottom of the page up into the top action bar (that card is
+              removed below) so staff don't have to scroll to grab the link. */}
+          {proposal.signing_token && (
+            <button
+              className="nv-btn nv-btn--ghost nv-btn--md"
+              onClick={() => copyToClipboard(publicUrl, 'link')}
+            >
+              {copied === 'link' ? '✓ Copied!' : '🔗 Copy Link'}
+            </button>
+          )}
+          {/* NUVCL-99: renamed from "View Public Page ↗" to "View ↗" */}
+          {proposal.status === 'sent' && (
+            <a href={publicUrl} target="_blank" rel="noreferrer"
+               className="nv-btn nv-btn--outlined nv-btn--md">
+              View ↗
+            </a>
           )}
           {canSend && (
             <button
@@ -282,6 +295,12 @@ export default function ProposalDetailPage() {
             </button>
           )}
           {canSend && (
+            <Link href={`/proposals/new?edit=${proposal.id}`}
+                  className="nv-btn nv-btn--outlined nv-btn--md">
+              ✎ Edit
+            </Link>
+          )}
+          {canSend && (
             <button
               className="nv-btn nv-btn--outlined nv-btn--md"
               style={{ borderColor: 'var(--nv-error)', color: 'var(--nv-error)' }}
@@ -290,12 +309,6 @@ export default function ProposalDetailPage() {
             >
               {deleting ? 'Deleting…' : '🗑 Delete'}
             </button>
-          )}
-          {proposal.status === 'sent' && (
-            <a href={publicUrl} target="_blank" rel="noreferrer"
-               className="nv-btn nv-btn--outlined nv-btn--md">
-              View Public Page ↗
-            </a>
           )}
           {proposal.sent_at && (
             <button
@@ -438,10 +451,15 @@ export default function ProposalDetailPage() {
                            letterSpacing: '0.08em', margin: '0 0 12px' }}>
                 Personal Message
               </h2>
-              <p style={{ color: 'var(--nv-text-body)', lineHeight: 1.6, margin: 0,
-                          fontStyle: 'italic', fontSize: 15 }}>
-                &ldquo;{proposal.sender_message}&rdquo;
-              </p>
+              {/* sender_message is rich HTML from the wizard's RichTextEditor
+                  (same field lib/documentModel.ts feeds into the generated
+                  document's introMessage, rendered via dangerouslySetInnerHTML
+                  there too) — interpolating it as plain text showed the raw
+                  <p> tags instead of rendering them. */}
+              <div className="sender-message-rich"
+                style={{ color: 'var(--nv-text-body)', lineHeight: 1.6,
+                          fontStyle: 'italic', fontSize: 15 }}
+                dangerouslySetInnerHTML={{ __html: proposal.sender_message }} />
               {proposal.sender && (
                 <p style={{ margin: '10px 0 0', fontSize: 13, color: 'var(--nv-text-muted)' }}>
                   — {proposal.sender.name}, {proposal.sender.role}
@@ -519,29 +537,9 @@ export default function ProposalDetailPage() {
               </div>
             </div>
           )}
-
-          {/* Public link */}
-          {proposal.signing_token && (
-            <div className="nv-card" style={{ padding: 20 }}>
-              <h2 style={{ fontSize: 13, fontFamily: 'var(--nv-font-display)',
-                           color: 'var(--nv-text-muted)', textTransform: 'uppercase',
-                           letterSpacing: '0.08em', margin: '0 0 10px' }}>
-                Signing Link
-              </h2>
-              <div style={{ background: 'var(--nv-platinum)', borderRadius: 8,
-                            padding: '8px 12px', wordBreak: 'break-all',
-                            fontSize: 12, color: 'var(--nv-text-muted)' }}>
-                {publicUrl}
-              </div>
-              <button
-                className="nv-btn nv-btn--ghost nv-btn--sm"
-                style={{ marginTop: 8, width: '100%' }}
-                onClick={() => copyToClipboard(publicUrl, 'link')}
-              >
-                {copied === 'link' ? '✓ Copied!' : 'Copy link'}
-              </button>
-            </div>
-          )}
+          {/* NUVCL-99: the "Signing Link" card that used to live here was
+              removed — Copy Link now lives in the top action bar instead of
+              being duplicated in both places. */}
         </div>
       </div>
 
@@ -568,6 +566,9 @@ export default function ProposalDetailPage() {
       </div>
 
       <style jsx>{`
+        .sender-message-rich :global(p) { margin: 0 0 10px; }
+        .sender-message-rich :global(p:last-child) { margin-bottom: 0; }
+        .sender-message-rich :global(ul), .sender-message-rich :global(ol) { margin: 0 0 10px 20px; }
         .resend-modal-overlay {
           position: fixed; inset: 0; background: rgba(15, 23, 32, 0.45);
           display: flex; align-items: center; justify-content: center;
