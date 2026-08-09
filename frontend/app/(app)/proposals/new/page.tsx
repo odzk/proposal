@@ -253,6 +253,12 @@ export default function NewProposalPage() {
     if (appliedInitialRegionSettings.current) return
     appliedInitialRegionSettings.current = true
     applyRegionSettings(draft.hotel.region)
+    // Deliberately only depends on regionSettingsMap/editId — the ref guard
+    // above ensures this fires once for a brand-new proposal's *initial*
+    // region default; including applyRegionSettings/draft.hotel.region would
+    // make it re-fire on every later region change, which is already
+    // handled directly by Step1HotelDetails's own onChange handler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [regionSettingsMap, editId])
 
   const step = draft.step
@@ -2910,7 +2916,7 @@ function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
   return (
     <div className="step-content">
       <h2 className="step-title">Preview & Save</h2>
-      <p className="step-desc">Review proposal details before generating the document. Sending happens afterwards, from the proposal's detail page.</p>
+      <p className="step-desc">Review proposal details before generating the document. Sending happens afterwards, from the proposal&apos;s detail page.</p>
 
       <div className="preview-summary">
         <SummaryRow label="Hotel"    value={draft.hotel.name || '—'} />
@@ -2932,7 +2938,7 @@ function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
       <div className="preview-note">
         Clicking <strong>Generate Document</strong> will create and save the proposal — it will
         not be sent yet. Open it from the Proposals list afterwards to review, then use its
-        <strong> Send</strong> button (which always asks you to confirm) when you're ready to send it.
+        <strong> Send</strong> button (which always asks you to confirm) when you&apos;re ready to send it.
       </div>
 
       <div className="preview-doc-header">
