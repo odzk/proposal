@@ -48,7 +48,7 @@ export default function DashboardPage() {
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/icons/rocket.svg" width="16" height="16" alt=""
             style={{ marginRight: 6, filter: 'brightness(0) invert(1)', flexShrink: 0 }} />
-          New Proposal
+          New Document
         </Link>
       </header>
 
