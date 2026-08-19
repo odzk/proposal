@@ -341,17 +341,26 @@ a.nv-sidebar-subnav-item.nv-sidebar-subnav-item--active {
    else on the wizard / details page (nav, cards, buttons, sidebars) is hidden.
    Target element is <ProposalDocument>'s root, #proposal-print-root. */
 @media print {
-  /* A4 page with a real top/bottom margin on every page EXCEPT the cover.
-     @page :first is what actually fixes "page 3, 4 and the rest" having no
-     top/bottom margin: when one tall element (e.g. Scope of Works) spills
-     across several physical pages via natural pagination, CSS padding on
-     that element only applies at its own start/end, NOT at each
-     intermediate page-break — so a shared @page margin is the only way to
-     guarantee every physical page gets breathing room regardless of where
-     content happens to break. The cover (first page) still needs zero
-     margin so its background image/photo run edge-to-edge full-bleed. */
-  @page { size: A4; margin: 15mm 14mm; }
-  @page :first { margin: 0; }
+  /* @page margin is ZERO for every physical page, deliberately, not just
+     the cover. It used to be 15mm 14mm with an @page :first override to
+     zero it out just for the cover — that worked in Chrome (verified) but
+     NOT in Firefox: Firefox's print-to-PDF pipeline appears to compute its
+     "does anything overflow the page" check against the GENERAL @page
+     content width (182mm) for the WHOLE document, ignoring :first's wider
+     210mm box for page 1 specifically. Since the cover is deliberately
+     210mm (full bleed), Firefox saw that as overflowing everywhere and
+     auto-shrunk the entire PDF to ~86% (182/210) to compensate — a visible
+     border around a "shrunk" cover on every page, not just page 1. Chrome
+     had an analogous but separately-triggered shrink bug (see the
+     #proposal-print-root comment below) that a narrower fix solved for
+     Chrome alone without touching this. Removing the @page :first
+     discrepancy entirely (uniform 0 for every page) sidesteps BOTH
+     engines' versions of this bug at once, since there's no longer any
+     page-to-page difference for either engine to mishandle. The visual
+     top/bottom/side margin that @page used to provide on non-cover pages
+     now comes from padding on .doc-page:not(.doc-cover) below instead —
+     see that rule's comment for the one tradeoff this introduces. */
+  @page { size: A4; margin: 0; }
 
   /* Chrome (and most print engines) skip background-color/background-image
      by default when printing unless the page explicitly opts in — without
@@ -369,6 +378,13 @@ a.nv-sidebar-subnav-item.nv-sidebar-subnav-item--active {
 
   body * { visibility: hidden; }
   #proposal-print-root, #proposal-print-root * { visibility: visible; }
+  /* width is 100% again (it was briefly pinned to an explicit 182mm as a
+     Chrome-only fix for a shrink bug caused by @page :first giving page 1
+     a different content width than every other page — see the @page
+     comment above for why that whole discrepancy is gone now). With
+     every page sharing the same zero @page margin, 100% resolves to the
+     same 210mm on every page, so there's no page-to-page mismatch left
+     for any print engine to trip over. */
   #proposal-print-root {
     position: absolute;
     top: 0;
@@ -437,13 +453,37 @@ a.nv-sidebar-subnav-item.nv-sidebar-subnav-item--active {
      proposal now prints onto one or two pages after the cover instead of
      one page per section. Content that's genuinely too long to fit (many
      services, a long clause list, etc.) still spills onto further pages
-     naturally rather than being force-shrunk to the point of being unreadable. */
+     naturally rather than being force-shrunk to the point of being unreadable.
+
+     padding: 15mm 14mm 0 is new — it's what used to be the @page margin,
+     now that @page is 0 everywhere (see that rule's comment for why).
+     Top-only (no bottom padding) is deliberate: giving every section BOTH
+     top and bottom padding created a double gap whenever two short
+     sections land on the same physical page (e.g. Background ends and
+     Scope of Works starts on the same page) — Background's own
+     padding-bottom plus Scope's own padding-top plus the 6mm margin below
+     would stack into a ~36mm gap where only 6mm was intended. Top-only
+     avoids that: a section only gets its own breathing room at the very
+     top of whichever page IT starts on, and pages just end wherever
+     content naturally runs out (no bottom margin needed there — nothing
+     forces content flush to the physical bottom edge).
+
+     KNOWN TRADEOFF: CSS padding on a box that itself fragments across
+     several physical pages only applies at that box's own first and last
+     fragment, not at every intermediate page break (unlike @page margin,
+     which used to apply the margin to every physical page regardless of
+     where content broke). So if one single section — e.g. Scope of Works
+     for a hotel with many services — is long enough to span 3+ physical
+     pages on its own, its OWN middle pages won't get top padding (text
+     starts flush at the physical top edge on those interior pages only).
+     Short/typical proposals are unaffected; flag this if it becomes a
+     real issue for very large service portfolios. */
   #proposal-print-root .doc-page:not(.doc-cover) {
     max-width: none;
     box-shadow: none;
     border-radius: 0;
     margin: 0 0 6mm;
-    padding: 0;
+    padding: 15mm 14mm 0;
     font-size: 11px;
     line-height: 1.4;
     page-break-after: auto;
