@@ -458,7 +458,7 @@ export default function BodyConfigurationPage() {
                   <p className="scope-panel__hint">
                     Default Small Print / Footnotes for <strong>{cat.label}</strong> — copied onto Step 4
                     (Pricing) of a new proposal whenever this service line is added on Step 2, alongside
-                    every other selected service's footnotes in one combined, unlabelled list. Editing it
+                    every other selected service&apos;s footnotes in one combined, unlabelled list. Editing it
                     here only affects proposals created afterward.
                   </p>
 
