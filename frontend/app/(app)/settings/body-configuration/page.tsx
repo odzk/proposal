@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import type { ServiceCategory, ServiceCategoryScopeSection } from '@/lib/types'
+import type { ServiceCategory, ServiceCategoryFootnote, ServiceCategoryScopeSection } from '@/lib/types'
 import { generateRowId } from '@/lib/serviceCatalog'
 
 // Body Configuration — the main service-line categories (Sales, Marketing,
@@ -37,6 +37,72 @@ export default function BodyConfigurationPage() {
   const [scopeSaving, setScopeSaving]   = useState(false)
   const [scopeError, setScopeError]     = useState('')
   const [scopeSaved, setScopeSaved]     = useState(false)
+
+  // Small Print / Footnotes editor (Pricing step) — same "expand one at a
+  // time, local draft, explicit Save" pattern as the Scope of Work editor
+  // above, just flat (no sections) since footnotes render as one combined,
+  // unlabelled list on Step 4 regardless of how many services are selected
+  // (see Step4Pricing's footnotes-box in proposals/new/page.tsx).
+  const [expandedFootnotesCode, setExpandedFootnotesCode] = useState<string | null>(null)
+  const [footnotesDraft, setFootnotesDraft]               = useState<ServiceCategoryFootnote[]>([])
+  const [footnotesSaving, setFootnotesSaving]             = useState(false)
+  const [footnotesError, setFootnotesError]               = useState('')
+  const [footnotesSaved, setFootnotesSaved]               = useState(false)
+
+  function toggleFootnotesEditor(cat: ServiceCategory) {
+    if (expandedFootnotesCode === cat.code) { setExpandedFootnotesCode(null); return }
+    setExpandedFootnotesCode(cat.code)
+    setFootnotesDraft((cat.defaultFootnotes || []).map(f => ({ ...f })))
+    setFootnotesError('')
+    setFootnotesSaved(false)
+  }
+
+  function addFootnoteItem() {
+    setFootnotesDraft(prev => [...prev, { id: generateRowId('fn'), text: '' }])
+    setFootnotesSaved(false)
+  }
+
+  function updateFootnoteItemText(itemId: string, text: string) {
+    setFootnotesDraft(prev => prev.map(f => f.id === itemId ? { ...f, text } : f))
+    setFootnotesSaved(false)
+  }
+
+  function removeFootnoteItem(itemId: string) {
+    setFootnotesDraft(prev => prev.filter(f => f.id !== itemId))
+    setFootnotesSaved(false)
+  }
+
+  function moveFootnoteItem(index: number, dir: -1 | 1) {
+    setFootnotesDraft(prev => {
+      const target = index + dir
+      if (target < 0 || target >= prev.length) return prev
+      const next = [...prev]
+      ;[next[index], next[target]] = [next[target], next[index]]
+      return next
+    })
+    setFootnotesSaved(false)
+  }
+
+  async function saveFootnotes(code: string) {
+    setFootnotesSaving(true)
+    setFootnotesError('')
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/settings/service-categories/${code}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ defaultFootnotes: footnotesDraft }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to save footnotes')
+      updateLocal(code, { defaultFootnotes: footnotesDraft })
+      setFootnotesSaved(true)
+    } catch (e: any) {
+      setFootnotesError(e.message || 'Failed to save footnotes')
+    } finally {
+      setFootnotesSaving(false)
+    }
+  }
 
   function toggleScopeEditor(cat: ServiceCategory) {
     if (expandedCode === cat.code) { setExpandedCode(null); return }
@@ -279,6 +345,16 @@ export default function BodyConfigurationPage() {
                   />
                 </div>
 
+                {rowError[cat.code] && <div className="bc-row__error">{rowError[cat.code]}</div>}
+              </div>
+
+              {/* Requested follow-up: Title/Description had barely any room once
+                  Active + Scope of Work + Small Print/Footnotes + Delete were all
+                  crammed into the same flex row as the fields (every one of those
+                  is flex-shrink:0, so they kept squeezing the only flexible column).
+                  Split into its own toolbar row below so the fields can use nearly
+                  the full row width. */}
+              <div className="bc-row__toolbar">
                 <label className="bc-active-toggle">
                   <input type="checkbox" checked={cat.active} onChange={() => toggleActive(cat)} />
                   <span>Active</span>
@@ -289,12 +365,15 @@ export default function BodyConfigurationPage() {
                   {expandedCode === cat.code ? 'Hide Scope of Work' : `Scope of Work (${cat.defaultScope?.length || 0})`}
                 </button>
 
+                <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm"
+                  onClick={() => toggleFootnotesEditor(cat)}>
+                  {expandedFootnotesCode === cat.code ? 'Hide Small Print' : `Small Print / Footnotes (${cat.defaultFootnotes?.length || 0})`}
+                </button>
+
                 <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm bc-delete"
                   onClick={() => deleteCategory(cat)} disabled={savingCode === cat.code}>
                   Delete
                 </button>
-
-                {rowError[cat.code] && <div className="bc-row__error">{rowError[cat.code]}</div>}
               </div>
 
               {expandedCode === cat.code && (
@@ -373,6 +452,57 @@ export default function BodyConfigurationPage() {
                   {scopeError && <div className="bc-row__error" style={{ position: 'static' }}>{scopeError}</div>}
                 </div>
               )}
+
+              {expandedFootnotesCode === cat.code && (
+                <div className="footnotes-panel">
+                  <p className="scope-panel__hint">
+                    Default Small Print / Footnotes for <strong>{cat.label}</strong> — copied onto Step 4
+                    (Pricing) of a new proposal whenever this service line is added on Step 2, alongside
+                    every other selected service's footnotes in one combined, unlabelled list. Editing it
+                    here only affects proposals created afterward.
+                  </p>
+
+                  {footnotesDraft.length === 0 && (
+                    <p className="scope-panel__empty">No footnotes yet — add one below.</p>
+                  )}
+
+                  <div className="footnotes-items">
+                    {footnotesDraft.map((item, ii) => (
+                      <div key={item.id} className="footnotes-item">
+                        <div className="scope-order">
+                          <button type="button" className="bc-order-btn" disabled={ii === 0}
+                            onClick={() => moveFootnoteItem(ii, -1)} aria-label="Move footnote up">▲</button>
+                          <button type="button" className="bc-order-btn" disabled={ii === footnotesDraft.length - 1}
+                            onClick={() => moveFootnoteItem(ii, 1)} aria-label="Move footnote down">▼</button>
+                        </div>
+                        <textarea
+                          className="nv-input footnotes-item__text"
+                          value={item.text}
+                          onChange={e => updateFootnoteItemText(item.id, e.target.value)}
+                          placeholder="e.g. Our fees exclude advertising costs and out-of-pocket expenses."
+                          rows={2}
+                        />
+                        <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm bc-delete"
+                          onClick={() => removeFootnoteItem(item.id)}>
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+
+                  <div className="scope-panel__actions">
+                    <button type="button" className="nv-btn nv-btn--outlined nv-btn--sm" onClick={addFootnoteItem}>
+                      + Add Footnote
+                    </button>
+                    <button type="button" className="nv-btn nv-btn--solid nv-btn--sm"
+                      onClick={() => saveFootnotes(cat.code)} disabled={footnotesSaving}>
+                      {footnotesSaving ? 'Saving…' : 'Save Footnotes'}
+                    </button>
+                    {footnotesSaved && <span className="scope-panel__saved">Saved ✓</span>}
+                  </div>
+                  {footnotesError && <div className="bc-row__error" style={{ position: 'static' }}>{footnotesError}</div>}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -435,11 +565,17 @@ export default function BodyConfigurationPage() {
         .bc-row__fields { flex: 1; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
         .bc-label-input { font-weight: 600; }
         .bc-desc-input { font-size: 12.5px; }
+        .bc-row__toolbar {
+          display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+          margin-top: 6px; padding: 8px 12px;
+          border: 1px solid var(--nv-border-hair); border-radius: 8px;
+          background: rgba(40,104,127,0.015);
+        }
         .bc-active-toggle {
           display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--nv-text-muted);
-          flex-shrink: 0; align-self: center; white-space: nowrap;
+          flex-shrink: 0; white-space: nowrap;
         }
-        .bc-delete { align-self: center; color: var(--nv-error); flex-shrink: 0; }
+        .bc-delete { color: var(--nv-error); flex-shrink: 0; margin-left: auto; }
         .bc-row__error {
           position: absolute; bottom: -18px; left: 12px; font-size: 11px; color: var(--nv-error);
         }
@@ -487,6 +623,21 @@ export default function BodyConfigurationPage() {
         .scope-items { display: flex; flex-direction: column; gap: 8px; padding-left: 30px; }
         .scope-item { display: flex; align-items: flex-start; gap: 8px; }
         .scope-item__text { flex: 1; font-size: 12.5px; resize: vertical; }
+
+        .footnotes-panel {
+          border: 1px solid var(--nv-border-hair);
+          border-top: none;
+          border-radius: 0 0 8px 8px;
+          background: rgba(40,104,127,0.015);
+          padding: 14px 14px 16px;
+          margin-top: -10px;
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+        }
+        .footnotes-items { display: flex; flex-direction: column; gap: 8px; }
+        .footnotes-item { display: flex; align-items: flex-start; gap: 8px; }
+        .footnotes-item__text { flex: 1; font-size: 12.5px; resize: vertical; }
       `}</style>
     </div>
   )

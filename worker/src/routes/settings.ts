@@ -144,12 +144,13 @@ export async function getServiceCategories(env: Env, session: Session): Promise<
   ).all<ServiceCategoryRow>()
 
   const data = results.map(r => ({
-    code:         r.code,
-    label:        r.label,
-    description:  r.description,
-    sortOrder:    r.sort_order,
-    active:       !!r.active,
-    defaultScope: JSON.parse(r.default_scope_json || '[]'),
+    code:             r.code,
+    label:            r.label,
+    description:      r.description,
+    sortOrder:        r.sort_order,
+    active:           !!r.active,
+    defaultScope:     JSON.parse(r.default_scope_json || '[]'),
+    defaultFootnotes: JSON.parse(r.default_footnotes_json || '[]'),
   }))
 
   return ok(data)
@@ -168,6 +169,7 @@ export async function createServiceCategory(request: Request, env: Env, session:
   const body = await request.json() as {
     code?: string; label?: string; description?: string
     defaultScope?: { id: string; heading: string; items: { id: string; text: string }[] }[]
+    defaultFootnotes?: { id: string; text: string }[]
   }
   const label = (body.label ?? '').trim()
   if (!label) return err('Label is required.')
@@ -185,13 +187,14 @@ export async function createServiceCategory(request: Request, env: Env, session:
   ).all<{ max_order: number }>()
   const nextOrder = (results[0]?.max_order ?? 0) + 1
   const defaultScope = body.defaultScope ?? []
+  const defaultFootnotes = body.defaultFootnotes ?? []
 
   await env.DB.prepare(`
-    INSERT INTO service_categories (code, label, description, sort_order, active, default_scope_json, updated_at)
-    VALUES (?, ?, ?, ?, 1, ?, datetime('now'))
-  `).bind(code, label, body.description ?? '', nextOrder, JSON.stringify(defaultScope)).run()
+    INSERT INTO service_categories (code, label, description, sort_order, active, default_scope_json, default_footnotes_json, updated_at)
+    VALUES (?, ?, ?, ?, 1, ?, ?, datetime('now'))
+  `).bind(code, label, body.description ?? '', nextOrder, JSON.stringify(defaultScope), JSON.stringify(defaultFootnotes)).run()
 
-  return ok({ code, label, description: body.description ?? '', sortOrder: nextOrder, active: true, defaultScope })
+  return ok({ code, label, description: body.description ?? '', sortOrder: nextOrder, active: true, defaultScope, defaultFootnotes })
 }
 
 export async function updateServiceCategory(
@@ -205,17 +208,19 @@ export async function updateServiceCategory(
   const body = await request.json() as {
     label?: string; description?: string; active?: boolean
     defaultScope?: { id: string; heading: string; items: { id: string; text: string }[] }[]
+    defaultFootnotes?: { id: string; text: string }[]
   }
 
   await env.DB.prepare(`
     UPDATE service_categories
-    SET label = ?, description = ?, active = ?, default_scope_json = ?, updated_at = datetime('now')
+    SET label = ?, description = ?, active = ?, default_scope_json = ?, default_footnotes_json = ?, updated_at = datetime('now')
     WHERE code = ?
   `).bind(
     body.label !== undefined ? body.label : existing.label,
     body.description !== undefined ? body.description : existing.description,
     body.active !== undefined ? (body.active ? 1 : 0) : existing.active,
     body.defaultScope !== undefined ? JSON.stringify(body.defaultScope) : existing.default_scope_json,
+    body.defaultFootnotes !== undefined ? JSON.stringify(body.defaultFootnotes) : existing.default_footnotes_json,
     code,
   ).run()
 

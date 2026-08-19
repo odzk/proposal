@@ -6,7 +6,7 @@
 
 import type {
   FeeRow, FeeType, PricingFootnote, ProposalTerms, Region, ScopeItem,
-  ServiceCategoryScopeSection, ServiceCode, TermsClause,
+  ServiceCategoryFootnote, ServiceCategoryScopeSection, ServiceCode, TermsClause,
 } from './types'
 
 export interface ScopeSectionItemDef {
@@ -264,7 +264,16 @@ export function initFeeRows(code: ServiceCode): FeeRow[] {
   }))
 }
 
-export function initFootnotes(code: ServiceCode): PricingFootnote[] {
+// `liveFootnotes` mirrors initScopeItems' `liveScope` param — the category's
+// live Settings → Body Configuration default footnotes (staff-editable)
+// take priority over this file's hardcoded SERVICE_CATALOG.pricingFootnotes
+// fallback when present. Unlike scope items, footnotes don't need
+// getServiceEntry's label/color/sections plumbing, so this reads liveFootnotes
+// directly rather than routing it through that function.
+export function initFootnotes(code: ServiceCode, liveFootnotes?: ServiceCategoryFootnote[]): PricingFootnote[] {
+  if (liveFootnotes && liveFootnotes.length > 0) {
+    return liveFootnotes.map(f => ({ id: f.id, text: f.text }))
+  }
   const entry = getServiceEntry(code)
   return entry.pricingFootnotes.map(text => ({ id: generateId('fn'), text }))
 }

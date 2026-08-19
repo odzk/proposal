@@ -25,6 +25,14 @@ export interface ProposalDocModel {
   title:             string
   hotelName:         string
   contactName:       string
+  // NUVCL-103: contact title/email/phone were captured on Step 1 and shown
+  // to staff on the Proposal Details sidebar, but were never surfaced here —
+  // so they silently never made it into the generated document. Added so the
+  // printed/PDF letter can address the contact the same way the on-screen
+  // proposal record does.
+  contactTitle:      string
+  contactEmail:      string
+  contactPhone:      string
   propertyAddress:   string
   nuvhoAddress:      string   // Nuvho entity address for the proposal's region (Settings → Region Settings)
   companyName:       string   // legal entity name shown as the section heading — e.g. "Nuvho Pty Ltd" (AU); differs per region
@@ -80,6 +88,9 @@ export function buildDocModelFromDraft(draft: ProposalDraft, staff: StaffLike[])
     title,
     hotelName:         draft.hotel.name,
     contactName:       draft.hotel.contactName,
+    contactTitle:      draft.hotel.contactTitle,
+    contactEmail:      draft.hotel.contactEmail,
+    contactPhone:      draft.hotel.contactPhone,
     propertyAddress:   draft.hotel.propertyAddress,
     nuvhoAddress:      draft.regionSettings.address,
     companyName:       draft.regionSettings.companyName,
@@ -127,6 +138,9 @@ export function buildDocModelFromProposal(p: any): ProposalDocModel {
     title,
     hotelName:         p.hotel_name || '',
     contactName:       p.contact_name || '',
+    contactTitle:      p.contact_title || '',
+    contactEmail:      p.contact_email || '',
+    contactPhone:      p.contact_phone || '',
     propertyAddress:   p.property_address || '',
     nuvhoAddress:      p.nuvho_address || '',
     companyName:       p.company_name || '',

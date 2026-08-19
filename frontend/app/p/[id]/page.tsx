@@ -34,6 +34,11 @@ export default function PublicProposalPage() {
   const [sigName,    setSigName]    = useState('')
   const [sigTitle,   setSigTitle]   = useState('')
   const [sigDataUrl, setSigDataUrl] = useState('')
+  // NUVCL-105: requires an explicit "I have read and agree to the Terms and
+  // Conditions" acknowledgement before Accept & Sign is enabled — mirrors
+  // the approval statement added to the Quote Approval section of the
+  // generated document itself.
+  const [approved, setApproved] = useState(false)
 
   useEffect(() => {
     fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/p/${params.id}`)
@@ -55,6 +60,7 @@ export default function PublicProposalPage() {
 
   async function handleSign() {
     if (!docModel) return
+    if (!approved) return
     if (!sigName.trim()) return
     if (sigMethod === 'draw' && !sigDataUrl) return
     setSigning(true)
@@ -195,10 +201,21 @@ export default function PublicProposalPage() {
                 </div>
               )}
 
+              <label className="approval-check">
+                <input type="checkbox" checked={approved} onChange={e => setApproved(e.target.checked)} />
+                <span>
+                  I have read and agree to the{' '}
+                  <a href="#doc-section-appendix" onClick={e => {
+                    e.preventDefault()
+                    document.getElementById('doc-section-appendix')?.scrollIntoView({ behavior: 'smooth' })
+                  }}>Terms and Conditions</a>.
+                </span>
+              </label>
+
               <button
                 className="nv-btn nv-btn--solid nv-btn--lg"
                 onClick={handleSign}
-                disabled={signing || !sigName.trim() || (sigMethod === 'draw' && !sigDataUrl)}
+                disabled={signing || !approved || !sigName.trim() || (sigMethod === 'draw' && !sigDataUrl)}
                 aria-busy={signing}
               >
                 {signing ? 'Signing…' : 'Accept & Sign'}
@@ -316,6 +333,13 @@ export default function PublicProposalPage() {
           border-bottom: 1.5px solid var(--nv-border);
           max-width: 420px;
         }
+
+        .approval-check {
+          display: flex; align-items: flex-start; gap: 8px; font-size: 13px;
+          color: var(--nv-text-muted); margin: 16px 0; cursor: pointer;
+        }
+        .approval-check input[type="checkbox"] { margin-top: 2px; cursor: pointer; }
+        .approval-check a { color: var(--nv-blue-slate); text-decoration: underline; }
 
         .public-signed, .public-expired {
           text-align: center;

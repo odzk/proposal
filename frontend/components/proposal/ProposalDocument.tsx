@@ -8,8 +8,8 @@ import type { ProposalDocModel } from '@/lib/documentModel'
 /* Read-only rendering of a normalized ProposalDocModel in the same letter +
    section structure as Nuvho's Word proposal templates: cover, salutation
    letter with a table of contents, Background, Scope of Works (grouped per
-   selected service), Nuvho Pty Ltd, Fee Structure, Quote Approval (signature),
-   and an Appendix of Terms & Conditions.
+   selected service), Nuvho Pty Ltd, Fee Structure, and an Appendix of Terms
+   & Conditions.
 
    Shared by the wizard's Preview & Send step (built from the in-progress
    draft) and the Proposal Details page (built from a saved proposal) so the
@@ -23,14 +23,13 @@ import type { ProposalDocModel } from '@/lib/documentModel'
    (Settings → Region Settings) so it matches whatever the section heading
    itself renders (see below) instead of staying hardcoded to the AU entity. */
 function buildTocItems(companyName: string, visible: {
-  showBackground: boolean; showScope: boolean; showFees: boolean; showApproval: boolean; showAppendix: boolean
+  showBackground: boolean; showScope: boolean; showFees: boolean; showAppendix: boolean
 }): { label: string; id: string }[] {
   const items: { label: string; id: string }[] = []
   if (visible.showBackground) items.push({ label: 'Background', id: 'doc-section-background' })
   if (visible.showScope)      items.push({ label: 'Scope of Works', id: 'doc-section-scope' })
   items.push({ label: companyName || 'Nuvho Pty Ltd', id: 'doc-section-nuvho' })
   if (visible.showFees)       items.push({ label: 'Fee Structure', id: 'doc-section-fees' })
-  if (visible.showApproval)   items.push({ label: 'Quote Approval', id: 'doc-section-approval' })
   if (visible.showAppendix)   items.push({ label: 'Appendix 1 – Terms & Conditions', id: 'doc-section-appendix' })
   return items
 }
@@ -40,11 +39,9 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
   // A step that was skipped (left with no usable content) drops both its
   // Table of Contents entry and its own page below — an empty "Scope of
   // Works" page with just a placeholder sentence isn't useful in a
-  // client-facing document. "Nuvho Pty Ltd" and "Quote Approval" are
-  // deliberately always shown: neither has a Skip button of its own (About
-  // Nuvho is auto-filled from Region/Entity Settings, not a wizard step;
-  // Quote Approval always confirms the proposal's validity window even when
-  // no signature block is required).
+  // client-facing document. "Nuvho Pty Ltd" is deliberately always shown:
+  // it has no Skip button of its own (About Nuvho is auto-filled from
+  // Region/Entity Settings, not a wizard step).
   // Background, Scope of Works, and Fee Structure all key off the same
   // "was the Services step skipped" check, so all three links/pages
   // disappear together rather than Fee Structure having its own separate
@@ -53,16 +50,11 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
   const showBackground = showServices
   const showScope       = showServices
   const showFees         = showServices
-  // Quote Approval hides entirely when Step 8's "Signature Required" toggle
-  // is off, instead of showing the old "No signature block requested" filler
-  // sentence. The legal footer (model.footerText) is unrelated boilerplate,
-  // so it still renders on its own further down even when this is false.
-  const showApproval     = model.signatureRequired
   // Hides when EITHER Services was skipped OR the resolved entity has no
   // clauses configured — both are independent reasons for there being
   // nothing to show.
   const showAppendix     = showServices && model.clauses.length > 0
-  const tocItems = buildTocItems(model.companyName, { showBackground, showScope, showFees, showApproval, showAppendix })
+  const tocItems = buildTocItems(model.companyName, { showBackground, showScope, showFees, showAppendix })
 
   function jumpTo(e: React.MouseEvent, id: string) {
     e.preventDefault()
@@ -71,32 +63,50 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
 
   return (
     <div className="doc-preview" id="proposal-print-root">
-      {/* Cover */}
+      {/* Cover — NUVCL-102: full-bleed A4 image. The "Nuvho PTY LTD" wordmark
+          and a "Date of Issue" label were never actually rendered here (both
+          already live on the Letter page below); the date VALUE that was
+          shown on the cover is removed per the ticket so the cover is pure
+          branding/title, with the print-only full-page sizing handled in
+          globals.css. */}
       <div className="doc-page doc-cover"
-        style={model.coverUrl ? { backgroundImage: `url(${model.coverUrl})` } : undefined}>
+        style={model.coverUrl ? ({ '--doc-cover-url': `url(${model.coverUrl})` } as React.CSSProperties) : undefined}>
         <div className="doc-cover__scrim">
           <NuvhoLogo variant="white" height={120} />
           <div className="doc-cover__title">{model.title}</div>
           <div className="doc-cover__hotel">{model.hotelName || '[Hotel Name]'}</div>
-          <div className="doc-cover__date">{model.dateIssued}</div>
         </div>
       </div>
 
-      {/* Letter */}
-      <div className="doc-page">
+      {/* Letter — always its own printed page (page 2, right after the cover);
+          see the .doc-letter print rule in globals.css for the forced
+          page-break-after that keeps Background/Scope of Works etc. from
+          flowing up onto the same sheet as the signature. */}
+      <div className="doc-page doc-letter">
         <div className="doc-letterhead">
           <div className="doc-letterhead__logo">
-            <NuvhoLogo height={96} />
+            {/* NUVCL-100: was height=96, oversized relative to the address
+                block next to it (11.5px text) — brought down to a
+                proportionate letterhead size. */}
+            <NuvhoLogo height={56} />
           </div>
           <div className="doc-nuvho-address">
             {model.nuvhoAddress && model.nuvhoAddress.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
-            <div className="doc-date">Date of Issue: {model.dateIssued}</div>
+            <div className="doc-date">{model.dateIssued}</div>
           </div>
         </div>
+        {/* NUVCL-103: title/email/phone were captured on Step 1 and shown to
+            staff on the Proposal Details sidebar, but were dropped from the
+            generated document entirely — added here. */}
         <div className="doc-address">
-          {model.contactName || '[Client Name]'}<br />
+          {model.contactName || '[Client Name]'}
+          {model.contactTitle && <>, {model.contactTitle}</>}<br />
           {model.hotelName || '[Hotel Name]'}<br />
           {model.propertyAddress || '[Property Address]'}
+          {(model.contactEmail || model.contactPhone) && <>
+            <br />
+            {model.contactEmail}{model.contactEmail && model.contactPhone && ' · '}{model.contactPhone}
+          </>}
         </div>
         <div className="doc-re">RE: {model.title}</div>
         <p>Dear {model.contactName || '[Client Name]'},</p>
@@ -114,6 +124,17 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
 
         <p>If you require further information or wish to discuss this proposal, please don&apos;t hesitate to contact me.</p>
         <p>Yours sincerely,</p>
+        {model.signatureRequired && (
+          <div className="doc-signature__mark">
+            {model.signatureMethod === 'draw'
+              ? (model.signatureDataUrl
+                  ? <img src={model.signatureDataUrl} alt="Signature" className="doc-signature__img" />
+                  : <span className="doc-empty">Signature not yet captured</span>)
+              : (model.signatoryName
+                  ? <span className="doc-signature__script">{model.signatoryName}</span>
+                  : <span className="doc-empty">Signature not yet captured</span>)}
+          </div>
+        )}
         <div className="doc-sender">
           <strong>{model.senderName || '[Sender Name]'}</strong><br />
           {model.senderRoleLabel || '[Sending team member not yet selected]'}
@@ -218,49 +239,13 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         </div>
       )}
 
-      {/* Quote Approval — hidden entirely when Signature Required (Step 8)
-          is off, rather than showing an empty-state sentence. */}
-      {showApproval && (
-        <div className="doc-page" id="doc-section-approval">
-          <h3 className="doc-heading">Quote Approval</h3>
-          {model.signatureMessage?.trim() ? (
-            // Staff-authored rich-text message (TinyMCE, wizard Signature step)
-            // takes the place of the default sentence when one has been set.
-            <div className="doc-signature-message" dangerouslySetInnerHTML={{ __html: model.signatureMessage }} />
-          ) : (
-            <p>
-              Should the terms of this proposal be acceptable, please sign below and return the applicable service
-              agreement. This proposal remains valid for {model.validityDays} days from the date of issue.
-            </p>
-          )}
-          <div className="doc-signature">
-            <div className="doc-signature__mark">
-              {model.signatureMethod === 'draw'
-                ? (model.signatureDataUrl
-                    ? <img src={model.signatureDataUrl} alt="Signature" className="doc-signature__img" />
-                    : <span className="doc-empty">Signature not yet captured</span>)
-                : (model.signatoryName
-                    ? <span className="doc-signature__script">{model.signatoryName}</span>
-                    : <span className="doc-empty">Signature not yet captured</span>)}
-            </div>
-            <div className="doc-signature__meta">
-              On behalf of {model.hotelName || '[Hotel Name]'}<br />
-              {model.signatoryName}{model.signatoryTitle ? `, ${model.signatoryTitle}` : ''}
-            </div>
-          </div>
-
-          {model.footerText && (
-            <div className="doc-legal-footer">
-              {model.footerText.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Legal footer still needs to render somewhere even when Quote
-          Approval itself is hidden — it's generic company-registration
-          boilerplate, unrelated to whether a signature was required. */}
-      {!showApproval && model.footerText && (
+      {/* Quote Approval section removed — the sender's signature now lives
+          in the letter above, and client acceptance happens via the public
+          sign page's own checkbox/approval flow rather than this static
+          statement. The legal footer is unrelated boilerplate (generic
+          company-registration text), so it always renders on its own page
+          below regardless. */}
+      {model.footerText && (
         <div className="doc-page">
           <div className="doc-legal-footer">
             {model.footerText.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
@@ -291,7 +276,8 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         }
         .doc-page p { margin-bottom: 12px; }
         .doc-cover {
-          height: 460px; background-size: cover; background-position: center;
+          position: relative;
+          height: 460px; background-image: var(--doc-cover-url, none); background-size: cover; background-position: center;
           background-color: var(--nv-blue-slate); display: flex; align-items: flex-end; padding: 0;
           /* Clip the scrim overlay (below) to this box's own border-radius —
              otherwise its square corners sit flush on top of the rounded
@@ -342,14 +328,11 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         .doc-fee-total { text-align: right; margin-top: 10px; font-weight: 700; color: var(--nv-blue-slate); }
         .doc-footnotes { margin-top: 12px; padding-left: 18px; font-size: 11px; color: var(--nv-text-muted); }
 
-        .doc-signature-message :global(p), .doc-rich-text :global(p) { margin: 0 0 10px; }
-        .doc-signature-message :global(ul), .doc-signature-message :global(ol),
+        .doc-rich-text :global(p) { margin: 0 0 10px; }
         .doc-rich-text :global(ul), .doc-rich-text :global(ol) { margin: 0 0 10px 20px; }
-        .doc-signature { display: flex; flex-direction: column; gap: 10px; margin-top: 20px; }
-        .doc-signature__mark { border-bottom: 1.5px solid var(--nv-border); padding-bottom: 8px; min-height: 60px; display: flex; align-items: flex-end; }
+        .doc-signature__mark { border-bottom: 1.5px solid var(--nv-border); padding-bottom: 8px; min-height: 60px; display: flex; align-items: flex-end; margin-top: 10px; }
         .doc-signature__script { font-family: var(--font-signature); font-size: 36px; color: var(--nv-text-heading); }
         .doc-signature__img { max-height: 80px; }
-        .doc-signature__meta { font-size: 12px; color: var(--nv-text-muted); }
 
         .doc-clause { margin-bottom: 14px; }
       `}</style>

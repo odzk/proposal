@@ -212,6 +212,14 @@ CREATE TABLE IF NOT EXISTS service_categories (
   -- proposal — same "settings are a template, not a live link" pattern as
   -- region_settings.clauses_json.
   default_scope_json  TEXT NOT NULL DEFAULT '[]',
+  -- Default Small Print / Footnotes (Pricing step) for this service line —
+  -- an ordered array of {id, text}, editable from Settings → Body
+  -- Configuration alongside Scope of Work. When a proposal adds this service
+  -- on Step 2, its Pricing-step footnotes pre-fill from this snapshot
+  -- (frontend/lib/serviceCatalog.ts's initFootnotes prefers this over its
+  -- own hardcoded SERVICE_CATALOG fallback). Same "settings are a template,
+  -- not a live link" pattern as default_scope_json above.
+  default_footnotes_json TEXT NOT NULL DEFAULT '[]',
   created_at          TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );

@@ -168,14 +168,15 @@ export interface EntitySettingsRow {
 }
 
 export interface ServiceCategoryRow {
-  code:               string
-  label:              string
-  description:        string
-  sort_order:         number
-  active:             number
-  default_scope_json: string
-  created_at:         string
-  updated_at:         string
+  code:                   string
+  label:                  string
+  description:            string
+  sort_order:             number
+  active:                 number
+  default_scope_json:     string
+  default_footnotes_json: string
+  created_at:             string
+  updated_at:             string
 }
 
 export interface StaffRow {

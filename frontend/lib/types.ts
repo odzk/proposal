@@ -168,6 +168,16 @@ export interface ServiceCategoryScopeSection {
   items:   ServiceCategoryScopeItem[]
 }
 
+// One default Small Print / Footnote line (Pricing step) as configured on a
+// ServiceCategory in Settings → Body Configuration. Mirrors the worker's
+// service_categories.default_footnotes_json column shape — flat, unlike
+// Scope of Work's sections, since footnotes render as a single combined list
+// with no per-service heading (see Step4Pricing's footnotes-box).
+export interface ServiceCategoryFootnote {
+  id:   string
+  text: string
+}
+
 // A main service-line category managed from Settings → Body Configuration — the
 // list Step 2 (Services) of the proposal wizard offers to select from. Fully
 // staff-editable (add/rename/reorder/deactivate/delete); `code` is stable
@@ -176,14 +186,16 @@ export interface ServiceCategoryScopeSection {
 // Scope of Work (sections + bullets) copied into a new proposal's Step 3
 // when this category is added on Step 2 — editing it here only affects
 // proposals created afterward (see the "Settings are a template, not a live
-// link" pattern used elsewhere, e.g. RegionSettings clauses).
+// link" pattern used elsewhere, e.g. RegionSettings clauses). `defaultFootnotes`
+// is the same idea for the Pricing step's Small Print / Footnotes.
 export interface ServiceCategory {
-  code:         string
-  label:        string
-  description:  string
-  sortOrder:    number
-  active:       boolean
-  defaultScope: ServiceCategoryScopeSection[]
+  code:             string
+  label:            string
+  description:      string
+  sortOrder:        number
+  active:           boolean
+  defaultScope:     ServiceCategoryScopeSection[]
+  defaultFootnotes: ServiceCategoryFootnote[]
 }
 
 export type SignatureMethod = 'type' | 'draw'

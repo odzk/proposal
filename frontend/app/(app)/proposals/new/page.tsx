@@ -11,11 +11,10 @@ import {
   getServiceLabel, getServiceColor, FEE_TYPES, REGION_META, initScopeItems, initFeeRows,
   initFootnotes, initTerms, generateRowId, deriveFeeSummary,
 } from '@/lib/serviceCatalog'
-import { buildDocModelFromDraft, downloadBlob } from '@/lib/documentModel'
+import { buildDocModelFromDraft } from '@/lib/documentModel'
 import { ProposalDocument } from '@/components/proposal/ProposalDocument'
 import { SignaturePad } from '@/components/proposal/SignaturePad'
 import { RichTextEditor } from '@/components/proposal/RichTextEditor'
-import { buildDocxFile } from '@/lib/exportDocx'
 import { setNavigationGuard } from '@/lib/navigationGuard'
 import { useSession } from '@/components/auth/AuthGuard'
 
@@ -1792,9 +1791,37 @@ function Step2Services({ draft, setDraft, errors, serviceCategories = [], servic
           ...deriveFeeSummary(feeRows),
           scopeItems: initScopeItems(code, category?.defaultScope),
           feeRows,
-          footnotes: initFootnotes(code),
+          footnotes: initFootnotes(code, category?.defaultFootnotes),
         } as DraftServiceLine],
       }
+    })
+  }
+
+  // NUVCL-106: a single tick box to select/deselect every service line at
+  // once, instead of clicking each card individually. Reuses the same
+  // seeding logic as toggle() (fee rows / scope items / footnotes) for any
+  // category not already selected, and leaves already-selected lines'
+  // configured pricing/scope untouched.
+  const allSelected = serviceCategories.length > 0 &&
+    serviceCategories.every(c => draft.services.some(s => s.code === c.code))
+
+  function toggleAll() {
+    setDraft(d => {
+      if (allSelected) return { ...d, services: [] }
+      const existingCodes = new Set(d.services.map(s => s.code))
+      const additions = serviceCategories
+        .filter(c => !existingCodes.has(c.code))
+        .map(c => {
+          const feeRows = initFeeRows(c.code)
+          return {
+            code: c.code,
+            ...deriveFeeSummary(feeRows),
+            scopeItems: initScopeItems(c.code, c.defaultScope),
+            feeRows,
+            footnotes: initFootnotes(c.code, c.defaultFootnotes),
+          } as DraftServiceLine
+        })
+      return { ...d, services: [...d.services, ...additions] }
     })
   }
 
@@ -1810,6 +1837,13 @@ function Step2Services({ draft, setDraft, errors, serviceCategories = [], servic
         <p className="step-note">
           No service lines are configured yet — add some under Settings → Service Lines.
         </p>
+      )}
+
+      {!serviceCategoriesLoading && serviceCategories.length > 0 && (
+        <label className="services-select-all">
+          <input type="checkbox" checked={allSelected} onChange={toggleAll} />
+          Select all services
+        </label>
       )}
 
       <div className="services-grid">
@@ -1837,6 +1871,11 @@ function Step2Services({ draft, setDraft, errors, serviceCategories = [], servic
       <p className="step-note">Pricing for each selected service is configured on the next Pricing step.</p>
 
       <style jsx>{`
+        .services-select-all {
+          display: flex; align-items: center; gap: 7px; font-size: 12.5px; font-weight: 600;
+          color: var(--nv-text-muted); cursor: pointer; margin-top: 10px;
+        }
+        .services-select-all input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: var(--nv-blue-slate); }
         .services-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
@@ -1982,6 +2021,22 @@ function ScopeServiceGroup({ label, color, showLabel, scopeItems, onChange }: {
     onChange(updated)
   }
 
+  // Requested follow-up: with a section like "Marketing" now split into many
+  // headings (Strategic Marketing Planning, Social Media Management, etc. —
+  // see Settings → Body Configuration), unchecking every item in a heading
+  // one at a time was tedious. Each heading now gets its own select/deselect-
+  // all checkbox, scoped to just the items sharing that sectionHeading —
+  // same on/off toggling as an individual item's checkbox, just applied to
+  // the whole group at once.
+  function isSectionAllOn(heading: string): boolean {
+    const items = scopeItems.filter(it => it.sectionHeading === heading)
+    return items.length > 0 && items.every(it => it.enabled)
+  }
+  function toggleSection(heading: string) {
+    const nextEnabled = !isSectionAllOn(heading)
+    onChange(scopeItems.map(it => it.sectionHeading === heading ? { ...it, enabled: nextEnabled } : it))
+  }
+
   let lastSection: string | null = null
 
   return (
@@ -1995,7 +2050,12 @@ function ScopeServiceGroup({ label, color, showLabel, scopeItems, onChange }: {
           <div key={item.id}>
             {showHeading && (
               <div className="scope-heading" style={{ color, marginTop: i > 0 ? 16 : 0 }}>
-                {item.sectionHeading}
+                <label className="scope-heading__select-all">
+                  <input type="checkbox"
+                    checked={isSectionAllOn(item.sectionHeading)}
+                    onChange={() => toggleSection(item.sectionHeading)} />
+                  {item.sectionHeading}
+                </label>
               </div>
             )}
             <div
@@ -2052,6 +2112,13 @@ function ScopeServiceGroup({ label, color, showLabel, scopeItems, onChange }: {
           font-size: 11px; font-weight: 700; font-family: var(--font-comfortaa);
           margin-bottom: 6px; padding-bottom: 5px; border-bottom: 1.5px solid var(--nv-border-hair);
         }
+        .scope-heading__select-all {
+          display: flex; align-items: center; gap: 7px; cursor: pointer;
+          text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .scope-heading__select-all input[type="checkbox"] {
+          width: 13px; height: 13px; cursor: pointer; accent-color: var(--nv-blue-slate); flex-shrink: 0;
+        }
         .scope-row {
           display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; margin-bottom: 6px;
           border-radius: 8px; cursor: grab; border: 1px solid var(--nv-border-hair);
@@ -2107,6 +2174,7 @@ function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
 
   const grandTotal = services.reduce((sum, s) => sum + deriveFeeSummary(s.feeRows).monthlyFee, 0)
   const showGroupLabels = services.length > 1
+  const totalFootnotes = services.reduce((n, s) => n + s.footnotes.length, 0)
 
   return (
     <div className="step-content">
@@ -2145,12 +2213,27 @@ function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
         <div className="footnotes-box__header">
           <span>Small Print / Footnotes</span>
         </div>
-        {services.map(s => (
+        {/* Requested follow-up: footnotes used to be split into a labelled
+            "Marketing" / "Sales Management" etc. sub-group per service,
+            mirroring the Scope/Pricing sections above — but footnotes are
+            generic small print, not service-specific content, and the
+            generated document already merges every service's footnotes into
+            one unlabelled list (see documentModel.ts's
+            `services.flatMap(s => s.footnotes)`). So the per-service label
+            here was pure wizard-editor scaffolding with no equivalent in the
+            output; removed so this editor matches what staff actually see
+            on the document — one shared list, one Add button. Footnotes
+            still save back onto their originating service under the hood
+            (unchanged data model), they're just no longer visually split. */}
+        {totalFootnotes === 0 && (
+          <div className="footnotes-box__empty">No footnotes — click &quot;Add Custom Item&quot; to add small print.</div>
+        )}
+        {services.map((s, i) => (
           <FootnotesGroup
             key={s.code}
-            label={showGroupLabels ? getServiceLabel(s.code, categoryLabel(s.code)) : undefined}
             footnotes={s.footnotes}
             onChange={footnotes => updateService(s.code, s.feeRows, footnotes)}
+            showAddButton={i === services.length - 1}
           />
         ))}
       </div>
@@ -2167,6 +2250,7 @@ function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
         .pricing-total { font-size: 12px; font-weight: 700; color: var(--nv-blue-slate); }
         .footnotes-box { margin-top: 18px; }
         .footnotes-box__header { margin-bottom: 10px; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em; color: var(--nv-text-muted); }
+        .footnotes-box__empty { font-size: 11px; color: var(--nv-text-muted); font-style: italic; margin-bottom: 6px; }
       `}</style>
     </div>
   )
@@ -2252,10 +2336,11 @@ function PricingServiceGroup({ label, color, showLabel, feeRows, onChange }: {
   )
 }
 
-/* One service's footnotes, stacked beneath the shared table (labelled only
-   when more than one service is present) instead of living behind a tab. */
-function FootnotesGroup({ label, footnotes, onChange }: {
-  label?: string; footnotes: PricingFootnote[]; onChange: (footnotes: PricingFootnote[]) => void
+/* One service's slice of the shared, unlabelled footnotes list — see the
+   comment above this component's call site in Step4Pricing for why there's
+   no per-service label here even when several services are selected. */
+function FootnotesGroup({ footnotes, onChange, showAddButton = true }: {
+  footnotes: PricingFootnote[]; onChange: (footnotes: PricingFootnote[]) => void; showAddButton?: boolean
 }) {
   const dragIdx  = useRef<number | null>(null)
   const dragOver = useRef<number | null>(null)
@@ -2285,12 +2370,6 @@ function FootnotesGroup({ label, footnotes, onChange }: {
 
   return (
     <div className="footnotes-group">
-      {label && (
-        <div className="footnotes-group__header">
-          <span className="footnotes-group__label">{label}</span>
-        </div>
-      )}
-      {footnotes.length === 0 && <div className="footnotes-box__empty">No footnotes — click &quot;Add Custom Item&quot; to add small print.</div>}
       {footnotes.map((fn, i) => {
         const isEditing = editingId === fn.id
         return (
@@ -2323,16 +2402,14 @@ function FootnotesGroup({ label, footnotes, onChange }: {
         )
       })}
 
-      <button type="button" className="nv-btn nv-btn--outlined nv-btn--sm footnote-add" onClick={addFootnote}>
-        + Add Custom Item
-      </button>
+      {showAddButton && (
+        <button type="button" className="nv-btn nv-btn--outlined nv-btn--sm footnote-add" onClick={addFootnote}>
+          + Add Custom Item
+        </button>
+      )}
 
       <style jsx>{`
-        .footnotes-group { margin-bottom: 14px; }
-        .footnotes-group:last-child { margin-bottom: 0; }
-        .footnotes-group__header { margin-bottom: 6px; }
-        .footnotes-group__label { font-size: 11px; font-weight: 700; color: var(--nv-text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
-        .footnotes-box__empty { font-size: 11px; color: var(--nv-text-muted); font-style: italic; margin-bottom: 6px; }
+        .footnotes-group { margin-bottom: 0; }
         .footnote-row {
           display: flex; gap: 8px; align-items: flex-start; padding: 7px 10px; margin-bottom: 6px;
           border-radius: 8px; cursor: grab; border: 1px solid var(--nv-border-hair); background: rgba(40,104,127,0.04);
@@ -2782,16 +2859,8 @@ function Step8Signature({ draft, setDraft, errors }: StepProps) {
     <div className="step-content">
       <h2 className="step-title">Signature</h2>
       <p className="step-desc">
-        Add an optional personal message for the client, then configure how they&apos;ll provide their signature.
+        Configure how the client will provide their signature.
       </p>
-
-      <FormField label="Custom message (optional)">
-        <RichTextEditor
-          value={terms.signatureMessage}
-          onChange={html => updateTerms({ signatureMessage: html })}
-          placeholder="e.g. Should the terms of this proposal be acceptable, please sign below and return the applicable service agreement…"
-        />
-      </FormField>
 
       <div className="signature-box">
         <label className="signature-box__toggle">
@@ -2893,25 +2962,6 @@ function Step8Signature({ draft, setDraft, errors }: StepProps) {
 function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
   const total = draft.services.reduce((acc, s) => acc + s.monthlyFee * s.term + s.setupFee, 0)
   const model = buildDocModelFromDraft(draft, staff)
-  const [exporting, setExporting] = useState<'pdf' | 'word' | null>(null)
-
-  const handleDownloadPdf = () => {
-    setExporting('pdf')
-    // Print-to-PDF: @media print (globals.css) hides everything except
-    // #proposal-print-root, which <ProposalDocument> renders into.
-    window.setTimeout(() => window.print(), 50)
-    window.setTimeout(() => setExporting(null), 600)
-  }
-
-  const handleDownloadWord = async () => {
-    setExporting('word')
-    try {
-      const blob = await buildDocxFile(model)
-      downloadBlob(blob, `${model.title.replace(/[^\w-]+/g, '-')}.docx`)
-    } finally {
-      setExporting(null)
-    }
-  }
 
   return (
     <div className="step-content">
@@ -2932,7 +2982,6 @@ function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
               ? (draft.terms.signatureDataUrl ? 'Drawn signature captured' : 'Required')
               : (draft.terms.signatoryName || 'Required')
         } />
-        <SummaryRow label="Custom message" value={draft.terms.signatureMessage?.trim() ? 'Added' : 'Not set'} />
       </div>
 
       <div className="preview-note">
@@ -2944,15 +2993,10 @@ function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
       <div className="preview-doc-header">
         <div>
           <h3 className="preview-doc-heading">Document Preview</h3>
-          <p className="step-desc">This is the structure the generated proposal document will follow.</p>
-        </div>
-        <div className="preview-doc-actions">
-          <button type="button" className="nv-btn nv-btn--ghost" onClick={handleDownloadPdf} disabled={exporting !== null}>
-            {exporting === 'pdf' ? 'Preparing…' : 'Download PDF'}
-          </button>
-          <button type="button" className="nv-btn nv-btn--ghost" onClick={handleDownloadWord} disabled={exporting !== null}>
-            {exporting === 'word' ? 'Preparing…' : 'Download Word'}
-          </button>
+          <p className="step-desc">
+            This is the structure the generated proposal document will follow. Downloading a PDF or
+            Word copy is available once it&apos;s saved — from the proposal&apos;s detail page.
+          </p>
         </div>
       </div>
       <ProposalDocument model={model} />
@@ -2985,7 +3029,6 @@ function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
           font-size: 15px;
           color: var(--nv-text-heading);
         }
-        .preview-doc-actions { display: flex; gap: 10px; flex-shrink: 0; }
       `}</style>
     </div>
   )

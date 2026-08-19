@@ -3,7 +3,7 @@
 // <ProposalDocument> renders for the on-screen/print preview, using the pure-JS
 // `docx` package (no server round-trip). Mirrors the same section order:
 // cover, letter, Background, Scope of Works, Nuvho Pty Ltd, Fee Structure,
-// Quote Approval (signature), Appendix — Terms & Conditions.
+// Appendix — Terms & Conditions.
 
 import {
   Document, Packer, Paragraph, TextRun, HeadingLevel, Table, TableRow, TableCell,
@@ -65,7 +65,7 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   children.push(new Paragraph({ text: model.dateIssued, alignment: AlignmentType.CENTER, spacing: { after: 400 } }))
 
   // Letter
-  children.push(new Paragraph({ text: `Date of Issue: ${model.dateIssued}`, spacing: { after: model.nuvhoAddress ? 40 : 200 } }))
+  children.push(new Paragraph({ text: model.dateIssued, spacing: { after: model.nuvhoAddress ? 40 : 200 } }))
   if (model.nuvhoAddress) {
     model.nuvhoAddress.split('\n').forEach((line, i, arr) => {
       children.push(new Paragraph({
@@ -82,11 +82,25 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   // introMessage is authored via TinyMCE (wizard Step 5) — always HTML now.
   htmlToParagraphs(model.introMessage).forEach(line => children.push(body(line)))
 
-  ;['Background', 'Scope of Works', 'Nuvho Pty Ltd', 'Fee Structure', 'Quote Approval', 'Appendix 1 – Terms & Conditions']
+  ;['Background', 'Scope of Works', 'Nuvho Pty Ltd', 'Fee Structure', 'Appendix 1 – Terms & Conditions']
     .forEach(item => children.push(new Paragraph({ children: [new TextRun({ text: item, bold: true })], spacing: { after: 40 } })))
 
   children.push(body('If you require further information or wish to discuss this proposal, please don’t hesitate to contact me.'))
   children.push(body('Yours sincerely,'))
+  if (model.signatureRequired) {
+    if (model.signatureMethod === 'draw' && model.signatureDataUrl) {
+      try {
+        const bytes = await dataUrlToBytes(model.signatureDataUrl)
+        children.push(new Paragraph({ children: [new ImageRun({ data: bytes, transformation: { width: 200, height: 70 }, type: 'png' })] }))
+      } catch {
+        children.push(italic('[Signature image could not be embedded]'))
+      }
+    } else if (model.signatureMethod !== 'draw' && model.signatoryName) {
+      children.push(new Paragraph({ children: [new TextRun({ text: model.signatoryName, italics: true, size: 48 })] }))
+    } else {
+      children.push(italic('Signature not yet captured'))
+    }
+  }
   children.push(new Paragraph({ children: [new TextRun({ text: model.senderName || '[Sender Name]', bold: true })] }))
   if (model.senderRoleLabel) children.push(new Paragraph({ text: model.senderRoleLabel }))
   if (model.senderEmail) children.push(new Paragraph({ text: `e: ${model.senderEmail}`, spacing: { after: 300 } }))
@@ -166,32 +180,6 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   } else {
     children.push(italic('No pricing configured yet.'))
   }
-
-  // Quote Approval
-  children.push(heading('Quote Approval'))
-  const signatureMessageText = model.signatureMessage?.trim() ? htmlToParagraphs(model.signatureMessage) : []
-  if (signatureMessageText.length) {
-    signatureMessageText.forEach(line => children.push(body(line)))
-  } else {
-    children.push(body(`Should the terms of this proposal be acceptable, please sign below and return the applicable service agreement. This proposal remains valid for ${model.validityDays} days from the date of issue.`))
-  }
-
-  if (!model.signatureRequired) {
-    children.push(italic('No signature block requested for this proposal.'))
-  } else if (model.signatureMethod === 'draw' && model.signatureDataUrl) {
-    try {
-      const bytes = await dataUrlToBytes(model.signatureDataUrl)
-      children.push(new Paragraph({ children: [new ImageRun({ data: bytes, transformation: { width: 200, height: 70 }, type: 'png' })] }))
-    } catch {
-      children.push(italic('[Signature image could not be embedded]'))
-    }
-  } else if (model.signatoryName) {
-    children.push(new Paragraph({ children: [new TextRun({ text: model.signatoryName, italics: true, size: 48 })] }))
-  } else {
-    children.push(italic('Signature not yet captured'))
-  }
-  children.push(new Paragraph({ text: `On behalf of ${model.hotelName || '[Hotel Name]'}`, spacing: { before: 100 } }))
-  children.push(new Paragraph({ text: `${model.signatoryName}${model.signatoryTitle ? ', ' + model.signatoryTitle : ''}` }))
 
   if (model.footerText) {
     model.footerText.split('\n').forEach((line, i) => {
