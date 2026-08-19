@@ -45,6 +45,11 @@ const navItems: NavItem[] = [
       { href: '/settings/user-settings',       label: 'User Settings'       },
     ],
   },
+  {
+    href: '/feedback',
+    label: 'Feedback',
+    icon: <Image src="/icons/envelopes.svg" width={18} height={18} alt="" style={{ filter: WHITE_ICON }} />,
+  },
 ]
 
 export function AppShell({ children }: { children: React.ReactNode }) {

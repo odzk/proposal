@@ -455,35 +455,43 @@ a.nv-sidebar-subnav-item.nv-sidebar-subnav-item--active {
      services, a long clause list, etc.) still spills onto further pages
      naturally rather than being force-shrunk to the point of being unreadable.
 
-     padding: 15mm 14mm 0 is new — it's what used to be the @page margin,
-     now that @page is 0 everywhere (see that rule's comment for why).
-     Top-only (no bottom padding) is deliberate: giving every section BOTH
-     top and bottom padding created a double gap whenever two short
-     sections land on the same physical page (e.g. Background ends and
-     Scope of Works starts on the same page) — Background's own
-     padding-bottom plus Scope's own padding-top plus the 6mm margin below
-     would stack into a ~36mm gap where only 6mm was intended. Top-only
-     avoids that: a section only gets its own breathing room at the very
-     top of whichever page IT starts on, and pages just end wherever
-     content naturally runs out (no bottom margin needed there — nothing
-     forces content flush to the physical bottom edge).
+     padding: 15mm 14mm is what used to be the @page margin, now that
+     @page is 0 everywhere (see that rule's comment for why).
 
-     KNOWN TRADEOFF: CSS padding on a box that itself fragments across
-     several physical pages only applies at that box's own first and last
-     fragment, not at every intermediate page break (unlike @page margin,
-     which used to apply the margin to every physical page regardless of
-     where content broke). So if one single section — e.g. Scope of Works
-     for a hotel with many services — is long enough to span 3+ physical
-     pages on its own, its OWN middle pages won't get top padding (text
-     starts flush at the physical top edge on those interior pages only).
-     Short/typical proposals are unaffected; flag this if it becomes a
-     real issue for very large service portfolios. */
+     NUVCL-109: this used to be top-only padding (no bottom), because CSS
+     padding on a box that fragments across several physical pages by
+     default (box-decoration-break: slice, the initial value) only renders
+     at that box's own FIRST and LAST fragment — never on interior
+     fragments. A section spanning 3+ physical pages on its own (e.g.
+     Scope of Works for a hotel with many services — an ordinary case, not
+     a rare one) therefore had its middle pages sitting flush against both
+     the physical top AND bottom edge, which is exactly the "margins are
+     off on page 3 and onward" bug reported against a real generated PDF.
+     box-decoration-break: clone (plus the -webkit- prefix Chromium needs
+     pre-v130) makes the padding re-apply on EVERY fragment, not just the
+     first/last, which is the actual fix for that — verified in headless
+     Chromium (v141) against a synthetic 4-page section, giving a correct
+     15mm/15mm top/bottom margin on every interior page. Firefox has had
+     full native support for clone across page-fragmentation (not just
+     multicol) for a long time, well before Chromium's v130 catch-up, so
+     this is expected to be the more cross-browser-correct behavior, not a
+     narrower one-engine patch like earlier iterations of this file's fix.
+
+     One minor, accepted cosmetic side effect of restoring bottom padding:
+     when two short sections land on the same physical page (e.g.
+     Background ends and Scope of Works starts on the same sheet),
+     Background's padding-bottom + Scope's padding-top + the 6mm margin
+     below stack into a ~36mm gap instead of a tight 6mm one. That's a
+     one-time, minor whitespace cost versus the multi-page margin bug this
+     fixes, which recurs on every interior page of every longer section. */
   #proposal-print-root .doc-page:not(.doc-cover) {
     max-width: none;
     box-shadow: none;
     border-radius: 0;
     margin: 0 0 6mm;
-    padding: 15mm 14mm 0;
+    padding: 15mm 14mm;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
     font-size: 11px;
     line-height: 1.4;
     page-break-after: auto;

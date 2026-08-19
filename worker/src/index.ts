@@ -22,6 +22,7 @@ import {
   deleteAttachment,
 } from './routes/proposals'
 import { syncM365Staff } from './routes/staff'
+import { submitFeedback } from './routes/feedback'
 import {
   getRegionSettings, getEntitySettings, updateEntitySettings,
   getServiceCategories, createServiceCategory, updateServiceCategory,
@@ -195,6 +196,13 @@ async function route(
   // Sync all Nuvho users from Microsoft 365 (Graph) into the staff table
   if (path === '/staff/sync-m365' && method === 'POST') {
     return syncM365Staff(request, env, session)
+  }
+
+  // Platform feedback / report an issue — emails odysseus.ambut@nuvho.com
+  // (cc jude.bolger@nuvho.com) via the same Graph sendMail path proposals
+  // use; see routes/feedback.ts. Nothing is persisted to D1.
+  if (path === '/feedback' && method === 'POST') {
+    return submitFeedback(request, env, session)
   }
 
   // Region Settings — LEGACY read-only feed for the proposal wizard's Hotel
