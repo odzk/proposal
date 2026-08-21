@@ -284,6 +284,13 @@ export interface ProposalDraft {
   // Step 5 — Cover
   cover: {
     coverUrl: string
+    // Set locally (never sent as-is) when staff pick "Upload custom image" —
+    // coverUrl is set to a browser-local `blob:` preview URL at the same
+    // time for immediate on-screen preview, but that URL only resolves in
+    // this tab. createDraftProposal() uploads this File to the worker's
+    // durable cover-photo storage and swaps the blob: URL out for the real
+    // URL it gets back before saving.
+    uploadFile?: File
   }
 
   // Step 6 — Terms & Conditions, and Step 7 — Signature. Both steps share

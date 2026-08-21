@@ -1,7 +1,7 @@
 'use client'
 
 import React from 'react'
-import { NuvhoLogo } from '@/components/ui/NuvhoLogo'
+import { NuvhoLogo, NuvhoIconMark } from '@/components/ui/NuvhoLogo'
 import { FEE_TYPES } from '@/lib/serviceCatalog'
 import { parseCoverUrl } from '@/lib/documentModel'
 import type { ProposalDocModel } from '@/lib/documentModel'
@@ -83,7 +83,6 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
           <span className="doc-cover-circles__arc" />
           <div className="doc-cover-circles__top">
             <NuvhoLogo variant="white" height={36} />
-            <span className="doc-cover-circles__badge">Confidential</span>
           </div>
           <div className="doc-cover-circles__body">
             <div className="doc-cover-circles__category">{model.title || 'Proposal'}</div>
@@ -99,46 +98,29 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
 
       {brandedTemplate === 'split' && (
         <div className="doc-page doc-cover doc-cover--split">
-          <div className="doc-cover-split__rail">
-            <NuvhoLogo variant="white" height={45} />
-            <div>
-              <div className="doc-cover-split__rail-label">Divisions engaged</div>
-              {/* Fixed placeholder list — there's no per-proposal "divisions
-                  engaged" field yet; revisit if that becomes a real input. */}
-              <ul className="doc-cover-split__rail-list">
-                <li><span className="doc-cover-split__dot" />Revenue</li>
-                <li><span className="doc-cover-split__dot" />Marketing</li>
-                <li><span className="doc-cover-split__dot" />Systems</li>
-              </ul>
+          <div
+            className="doc-cover-split__hero"
+            style={brandedPhotoUrl ? { backgroundImage: `url(${brandedPhotoUrl})` } : undefined}
+          >
+            <div className="doc-cover-split__hero-scrim">
+              <NuvhoLogo variant="white" height={38} />
             </div>
-            <div className="doc-cover-split__copyright">© {model.companyName || 'Nuvho Systems Pty Ltd'}</div>
+            {!brandedPhotoUrl && <span className="doc-cover-split__hero-placeholder" />}
           </div>
-          <div className="doc-cover-split__main">
-            <div
-              className="doc-cover-split__image"
-              style={brandedPhotoUrl ? { backgroundImage: `url(${brandedPhotoUrl})` } : undefined}
-            >
-              {!brandedPhotoUrl && <span className="doc-cover-split__image-placeholder" />}
+          <div className="doc-cover-split__content">
+            <div className="doc-cover-split__category">{model.title || 'Proposal'}</div>
+            <div className="doc-cover-split__heading">{model.hotelName || '[Hotel Name]'}</div>
+            <div className="doc-cover-split__divider" />
+            <div className="doc-cover-split__meta">
+              <span>Issued</span>
+              <strong>{model.dateIssued}</strong>
             </div>
-            <div className="doc-cover-split__content">
-              <div className="doc-cover-split__tags">
-                <span className="doc-cover-split__eyebrow">Report</span>
-              </div>
-              <div className="doc-cover-split__heading">{model.title || 'Proposal'}</div>
-              {/* Placeholder summary copy — no dedicated cover-blurb field on
-                  the proposal yet; revisit if that becomes a real input. */}
-              <p className="doc-cover-split__summary">
-                A structured engagement to strengthen commercial performance across revenue, marketing and systems.
-              </p>
-              <div className="doc-cover-split__footer-row">
-                <div>
-                  <div className="doc-cover-split__eyebrow">Prepared for</div>
-                  <div className="doc-cover-split__prepared">
-                    {model.contactName || '[Client Name]'}{model.contactTitle && `, ${model.contactTitle}`}
-                  </div>
-                </div>
-                <div className="doc-cover-split__date">{model.dateIssued}</div>
-              </div>
+          </div>
+          <div className="doc-cover-split__footer">
+            <span className="doc-cover-split__footer-stripe" />
+            <div className="doc-cover-split__footer-inner">
+              <NuvhoIconMark variant="white" size={22} />
+              <span className="doc-cover-split__footer-brand">nuvho.com</span>
             </div>
           </div>
         </div>
@@ -439,23 +421,30 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         .doc-cover__date  { color: rgba(255,255,255,0.7); font-size: 12px; }
 
         /* NUVCL-119 — branded cover templates (redrawn to match the client's
-           two reference mockups: a solid dark cover with a decorative arc,
-           and a sidebar + photo "report" layout). */
+           reference mockups: a solid dark cover with a decorative arc and a
+           vertically-centred hotel name, and a photo-hero cover with a
+           branding footer bar). */
+        /* Padding lives on the child rows (top/body/footer) below, not on
+           .doc-cover--circles itself — the print stylesheet's higher-
+           specificity #proposal-print-root .doc-cover rule (globals.css,
+           padding: 0) zeroes out any padding set on this container in the
+           actual PDF, which is what left the logo/heading pinned flush to
+           the page edges there even though the on-screen preview looked
+           fine. Descendant elements aren't touched by that override. */
         .doc-cover--circles {
           background-image: none; background-color: var(--nv-blue-slate);
-          flex-direction: column; align-items: stretch; justify-content: space-between;
-          padding: 40px 44px; position: relative; overflow: hidden;
+          flex-direction: column; align-items: stretch;
+          padding: 0; position: relative; overflow: hidden;
         }
         .doc-cover-circles__arc {
           position: absolute; left: -220px; bottom: -220px; width: 520px; height: 520px;
           border: 1px solid rgba(255,255,255,0.22); border-radius: 50%; pointer-events: none;
         }
-        .doc-cover-circles__top { display: flex; align-items: center; justify-content: space-between; z-index: 1; }
-        .doc-cover-circles__badge {
-          font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.85);
-          border: 1px solid rgba(255,255,255,0.4); border-radius: 999px; padding: 5px 14px;
-        }
-        .doc-cover-circles__body { z-index: 1; margin-top: auto; }
+        .doc-cover-circles__top { display: flex; align-items: center; z-index: 1; padding: 40px 44px 0; }
+        /* flex: 1 + its own justify-content: center vertically centres the
+           category/heading/issued group in the space between the logo row
+           and the footer, rather than pinning it to the bottom. */
+        .doc-cover-circles__body { flex: 1; display: flex; flex-direction: column; justify-content: center; z-index: 1; padding: 0 44px; }
         .doc-cover-circles__category {
           font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--nv-steel-blue); margin-bottom: 10px;
         }
@@ -465,35 +454,36 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
           text-transform: uppercase; letter-spacing: 0.08em;
         }
         .doc-cover-circles__meta strong { color: rgba(255,255,255,0.95); text-transform: none; letter-spacing: 0; font-size: 12px; }
-        .doc-cover-circles__footer { z-index: 1; font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 24px; }
+        .doc-cover-circles__footer { z-index: 1; font-size: 11px; color: rgba(255,255,255,0.5); padding: 0 44px 40px; }
 
-        .doc-cover--split { background-image: none; background-color: transparent; align-items: stretch; padding: 0; }
-        .doc-cover-split__rail {
-          width: 30%; flex-shrink: 0; background: #1A3D4A; padding: 28px 22px;
-          /* align-items: flex-start prevents the default flex "stretch" from
-             pulling the logo <img> to the rail's full width (which distorted
-             its aspect ratio into a "stretched" look) */
-          display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; color: white;
-        }
-        .doc-cover-split__rail-label { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-bottom: 10px; }
-        .doc-cover-split__rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: rgba(255,255,255,0.92); }
-        .doc-cover-split__rail-list li { display: flex; align-items: center; gap: 8px; }
-        .doc-cover-split__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--nv-steel-blue); flex-shrink: 0; }
-        .doc-cover-split__copyright { font-size: 9.5px; color: rgba(255,255,255,0.4); }
-        .doc-cover-split__main { flex: 1; display: flex; flex-direction: column; }
-        .doc-cover-split__image {
-          flex: 1; background-color: var(--nv-platinum); background-size: cover; background-position: center;
+        .doc-cover--split { background-image: none; background-color: transparent; flex-direction: column; align-items: stretch; padding: 0; }
+        .doc-cover-split__hero {
+          flex: 1 1 58%; position: relative; background-color: var(--nv-platinum);
+          background-size: cover; background-position: center; overflow: hidden;
           display: flex; align-items: center; justify-content: center;
         }
-        .doc-cover-split__image-placeholder { width: 30px; height: 30px; border: 1.5px dashed var(--nv-border); border-radius: 4px; }
-        .doc-cover-split__content { background: white; padding: 22px 26px; }
-        .doc-cover-split__tags { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
-        .doc-cover-split__eyebrow { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--nv-steel-blue); font-weight: 700; }
-        .doc-cover-split__heading { font-family: var(--font-comfortaa); font-size: 19px; font-weight: 700; color: var(--nv-text-heading); margin-bottom: 6px; }
-        .doc-cover-split__summary { font-size: 11.5px; line-height: 1.5; color: var(--nv-text-muted); margin: 0 0 14px; }
-        .doc-cover-split__footer-row { display: flex; align-items: flex-end; justify-content: space-between; }
-        .doc-cover-split__prepared { font-size: 12px; color: var(--nv-text-body); font-weight: 600; }
-        .doc-cover-split__date { font-size: 11px; color: var(--nv-text-muted); }
+        .doc-cover-split__hero-scrim {
+          position: absolute; top: 0; left: 0; right: 0; padding: 22px 26px;
+          display: flex; align-items: center; justify-content: space-between;
+          background: linear-gradient(to bottom, rgba(20,40,50,0.55), rgba(20,40,50,0));
+        }
+        .doc-cover-split__hero-placeholder { width: 30px; height: 30px; border: 1.5px dashed var(--nv-border); border-radius: 4px; }
+        .doc-cover-split__content { flex: 1 1 30%; padding: 24px 28px 20px; background: #EEF3F5; display: flex; flex-direction: column; justify-content: center; }
+        .doc-cover-split__category { font-size: 10.5px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--nv-steel-blue); font-weight: 700; margin-bottom: 8px; }
+        .doc-cover-split__heading { font-family: var(--font-comfortaa); font-size: 25px; font-weight: 700; color: var(--nv-blue-slate); margin-bottom: 18px; }
+        .doc-cover-split__divider { height: 1px; background: var(--nv-border-hair); margin-bottom: 12px; }
+        .doc-cover-split__meta { display: flex; gap: 6px; font-size: 10.5px; color: var(--nv-text-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+        .doc-cover-split__meta strong { color: var(--nv-blue-slate); text-transform: none; letter-spacing: 0; font-size: 12px; }
+        .doc-cover-split__footer { height: 46px; flex-shrink: 0; background: #1A3D4A; position: relative; overflow: hidden; }
+        .doc-cover-split__footer-stripe {
+          position: absolute; top: 0; bottom: 0; left: 38%; width: 70px; z-index: 0;
+          background: rgba(255,255,255,0.08); transform: skewX(-22deg); pointer-events: none;
+        }
+        .doc-cover-split__footer-inner {
+          position: relative; z-index: 1; height: 100%;
+          display: flex; align-items: center; gap: 10px; padding: 0 26px;
+        }
+        .doc-cover-split__footer-brand { font-size: 11px; letter-spacing: 0.06em; color: rgba(255,255,255,0.85); margin-left: auto; }
 
         .doc-cover--editorial { background-image: none; background-color: white; display: flex; align-items: stretch; padding: 0; }
         .doc-cover-editorial__spine { width: 14px; flex-shrink: 0; background: var(--nv-blue-slate); }

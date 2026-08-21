@@ -402,6 +402,73 @@ export async function deleteAttachment(
   return ok({ deleted: true })
 }
 
+/* ─── Cover photo (wizard Step 5 — Cover Image "Upload custom image") ───
+ * A single custom cover photo per proposal, stored in R2 under a STABLE key
+ * (covers/{proposalId}) so re-uploading a new photo overwrites the old one
+ * in place instead of accumulating orphaned objects. Unlike attachments,
+ * this is served back PUBLICLY (GET, no auth, wired in index.ts's public
+ * routes section) — the branded Split cover on the public Accept & Sign
+ * page (/p/:token) needs to display it in a browser that was never signed
+ * in, and a plain <img>/CSS background-image request never carries the
+ * app's session cookie anyway.
+ *
+ * Before this, picking "Upload custom image" just embedded a browser-local
+ * `blob:` URL straight into cover_url (see Step5Cover in
+ * app/(app)/proposals/new/page.tsx). That URL only ever resolves inside the
+ * exact browser tab that created it — dead on reload, dead on the Proposal
+ * Details page in a different tab, and (the reported bug) dead on the
+ * public sign page, which is always a different browser context. This
+ * gives the photo a real, durable URL instead. */
+const MAX_COVER_PHOTO_BYTES = 10 * 1024 * 1024   // 10MB
+
+export async function uploadCoverPhoto(
+  proposalId: string, request: Request, env: Env, session: Session
+): Promise<Response> {
+  const proposal = await env.DB.prepare('SELECT id FROM proposals WHERE id = ?')
+    .bind(proposalId).first<{ id: string }>()
+  if (!proposal) return err('Proposal not found', 404)
+
+  let form: FormData
+  try {
+    form = await request.formData()
+  } catch {
+    return err('Expected multipart/form-data with a "file" field')
+  }
+  // Same duck-typing rationale as uploadAttachment above.
+  const entry = form.get('file')
+  const file = entry as { name?: string; size?: number; type?: string; arrayBuffer?: () => Promise<ArrayBuffer> } | null
+  if (!file || typeof file === 'string' || typeof file.arrayBuffer !== 'function' || typeof file.size !== 'number') {
+    return err('No file provided')
+  }
+  if (file.size > MAX_COVER_PHOTO_BYTES) {
+    return err(`Cover photo is too large — ${MAX_COVER_PHOTO_BYTES / 1024 / 1024}MB limit`, 413)
+  }
+
+  const r2Key = `covers/${proposalId}`
+  await env.STORAGE.put(r2Key, await file.arrayBuffer(), {
+    httpMetadata: { contentType: file.type || 'application/octet-stream' },
+  })
+
+  // Relative path only — the frontend already knows its own
+  // NEXT_PUBLIC_WORKER_URL and builds the absolute URL it actually stores
+  // in cover_url from that, the same way every other worker call does.
+  return ok({ path: `/proposals/${proposalId}/cover-photo` }, 201)
+}
+
+/** Public — no auth. Streams the cover photo's bytes straight from R2. */
+export async function getCoverPhoto(proposalId: string, env: Env): Promise<Response> {
+  const obj = await env.STORAGE.get(`covers/${proposalId}`)
+  if (!obj) return err('Cover photo not found', 404)
+  return new Response(obj.body, {
+    headers: {
+      'Content-Type': obj.httpMetadata?.contentType || 'application/octet-stream',
+      // Short, not "immutable" — the same key gets overwritten whenever staff
+      // re-upload a different photo for this proposal (see uploadCoverPhoto).
+      'Cache-Control': 'public, max-age=300',
+    },
+  })
+}
+
 /* Base64-encodes an ArrayBuffer in fixed-size chunks — spreading a whole
  * large Uint8Array into String.fromCharCode(...) at once can blow the call
  * stack, so this walks it 32KB at a time instead. Used by

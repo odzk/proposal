@@ -48,10 +48,17 @@ export default function PublicProposalPage() {
         setRaw(d.data)
         const model = buildDocModelFromProposal(d.data)
         setDocModel(model)
-        setSigMethod(model.signatureMethod === 'draw' ? 'draw' : 'type')
-        setSigName(model.signatoryName)
-        setSigTitle(model.signatoryTitle)
-        setSigDataUrl(model.signatureMethod === 'draw' ? model.signatureDataUrl : '')
+        // model.signatoryName/signatoryTitle/signatureMethod/signatureDataUrl
+        // are the SENDER's own letter sign-off ("Yours sincerely, ...") —
+        // not the client's. The Accept & Sign form is the client signing as
+        // themselves, so it seeds from the hotel contact's own name/title
+        // instead, and always starts on the simpler "type name" method with
+        // a blank signature canvas rather than showing the sender's drawn
+        // signature as if the client had already signed.
+        setSigMethod('type')
+        setSigName(model.contactName)
+        setSigTitle(model.contactTitle)
+        setSigDataUrl('')
         setSigned(d.data.status === 'signed')
       })
       .catch(e => setError(e.message))

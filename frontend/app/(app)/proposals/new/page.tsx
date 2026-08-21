@@ -465,7 +465,30 @@ export default function NewProposalPage() {
     setDraft(d => ({ ...d, step: Math.min(STEPS.length, d.step + 1) }))
   }
 
+  // If staff picked "Upload custom image" on the Cover Image step,
+  // draft.cover.coverUrl currently holds a browser-local `blob:` URL (set
+  // for immediate preview only — see Step5Cover's file input below) and
+  // draft.cover.uploadFile holds the actual File. Neither the Proposal
+  // Details page nor the public Accept & Sign page can resolve a blob: URL
+  // outside this tab, so it needs to become a real, durable URL before the
+  // proposal is saved. Returns the resolved coverUrl to save (unchanged if
+  // no new file was picked), or throws on upload failure.
+  async function resolveCoverUrlForSave(proposalId: string): Promise<string> {
+    if (!draft.cover.uploadFile) return draft.cover.coverUrl
+    const form = new FormData()
+    form.append('file', draft.cover.uploadFile)
+    const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${proposalId}/cover-photo`, {
+      method: 'POST', credentials: 'include', body: form,
+    })
+    const data = await res.json()
+    if (!res.ok) throw new Error(data.error || 'Failed to upload cover photo')
+    const durableUrl = `${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${proposalId}/cover-photo`
+    const { template } = parseCoverUrl(draft.cover.coverUrl)
+    return template ? buildCoverUrl(template, durableUrl) : durableUrl
+  }
+
   async function createDraftProposal(): Promise<string> {
+    let id: string
     if (editId) {
       const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${editId}`, {
         method: 'PATCH',
@@ -495,18 +518,40 @@ export default function NewProposalPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to update proposal')
-      return editId
+      id = editId
+    } else {
+      // uploadFile is a local-only File reference (see resolveCoverUrlForSave
+      // above) — never actually sent to the API; the real upload happens
+      // below once this call has returned an id to upload against.
+      const { uploadFile, ...coverForApi } = draft.cover
+      const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ ...draft, cover: coverForApi }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to create proposal')
+      id = data.data.id as string
     }
 
-    const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      credentials: 'include',
-      body: JSON.stringify(draft),
-    })
-    const data = await res.json()
-    if (!res.ok) throw new Error(data.error || 'Failed to create proposal')
-    return data.data.id as string
+    // See resolveCoverUrlForSave above — a freshly-picked cover photo only
+    // has a browser-local blob: URL until now; upload it and patch cover_url
+    // to the durable URL the worker hands back, now that this proposal has
+    // an id to upload against.
+    if (draft.cover.uploadFile) {
+      const durableCoverUrl = await resolveCoverUrlForSave(id)
+      const patchRes = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify({ cover_url: durableCoverUrl }),
+      })
+      const patchData = await patchRes.json()
+      if (!patchRes.ok) throw new Error(patchData.error || 'Failed to save cover photo')
+    }
+
+    return id
   }
 
   // NUVCL-118: attachment upload lived under the now-removed Sender step.
@@ -2489,8 +2534,9 @@ function Step5Cover({ draft, setDraft, errors }: StepProps) {
                 {optTemplate === 'circles' && <span className="cover-swatch__arc" />}
                 {optTemplate === 'split' && (
                   <>
-                    <span className="cover-swatch__rail" />
+                    <span className="cover-swatch__hero" />
                     <span className="cover-swatch__panel" />
+                    <span className="cover-swatch__footer-bar" />
                   </>
                 )}
               </div>
@@ -2600,9 +2646,10 @@ function Step5Cover({ draft, setDraft, errors }: StepProps) {
           position: absolute; left: -34px; bottom: -34px; width: 80px; height: 80px;
           border-radius: 50%; border: 1px solid rgba(255,255,255,0.35);
         }
-        .cover-swatch--split { background: #fff; display: flex; }
-        .cover-swatch__rail { flex: 0 0 32%; background: #1A3D4A; }
-        .cover-swatch__panel { flex: 1; background: var(--nv-platinum); }
+        .cover-swatch--split { background: #fff; display: flex; flex-direction: column; }
+        .cover-swatch__hero { flex: 1 1 58%; background: var(--nv-platinum); }
+        .cover-swatch__panel { flex: 1 1 27%; background: #EEF3F5; }
+        .cover-swatch__footer-bar { flex: 0 0 15%; background: #1A3D4A; }
       `}</style>
     </div>
   )

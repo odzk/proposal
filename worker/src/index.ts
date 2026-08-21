@@ -20,6 +20,8 @@ import {
   generateEmailTemplate,
   uploadAttachment,
   deleteAttachment,
+  uploadCoverPhoto,
+  getCoverPhoto,
 } from './routes/proposals'
 import { syncM365Staff, getMySignature, updateMySignature, getMyProfile, updateMyProfile } from './routes/staff'
 import { submitFeedback } from './routes/feedback'
@@ -173,6 +175,17 @@ async function route(
     return signProposal(signMatch[1], request, env)
   }
 
+  // Public: cover photo bytes (wizard Step 5's "Upload custom image",
+  // branded Split template) — unauthenticated because the public Accept &
+  // Sign page above needs to display it in a browser that never has an app
+  // session, and a plain <img>/CSS background-image request never carries
+  // the session cookie anyway. Uploading (POST) still requires staff auth,
+  // in the authenticated section below.
+  const coverPhotoMatch = path.match(/^\/proposals\/([A-Z0-9]+)\/cover-photo$/)
+  if (coverPhotoMatch && method === 'GET') {
+    return getCoverPhoto(coverPhotoMatch[1], env)
+  }
+
   /* ── Authenticated routes ─────────────────────────────────── */
   const authResult = await requireAuth(request, env)
   if (authResult instanceof Response) return authResult
@@ -309,6 +322,12 @@ async function route(
   const attachmentDetailMatch = path.match(/^\/proposals\/([A-Z0-9]+)\/attachments\/([A-Za-z0-9_-]+)$/)
   if (attachmentDetailMatch && method === 'DELETE') {
     return deleteAttachment(attachmentDetailMatch[1], attachmentDetailMatch[2], env, session)
+  }
+
+  // Cover photo upload (wizard Step 5 — Cover Image "Upload custom image").
+  // The matching public GET is registered above, before auth is required.
+  if (coverPhotoMatch && method === 'POST') {
+    return uploadCoverPhoto(coverPhotoMatch[1], request, env, session)
   }
 
   // Audit log for a proposal
