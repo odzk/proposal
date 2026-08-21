@@ -34,7 +34,6 @@ export default function ProposalDetailPage() {
   const [audit,    setAudit]    = useState<AuditEntry[]>([])
   const [loading,  setLoading]  = useState(true)
   const [error,    setError]    = useState('')
-  const [sending,  setSending]  = useState(false)
   const [deleting, setDeleting] = useState(false)
   const [copied,   setCopied]   = useState<'id' | 'link' | null>(null)
   const [showDoc,  setShowDoc]  = useState(false)
@@ -92,22 +91,6 @@ export default function ProposalDetailPage() {
       .finally(() => setLoading(false))
   }, [id])
 
-  async function handleSend() {
-    if (!confirm(`Send proposal to ${proposal?.contact_email}?`)) return
-    setSending(true)
-    try {
-      const res = await fetch(`${WORKER}/proposals/${id}/send`, {
-        method: 'POST', credentials: 'include',
-      })
-      const json = await res.json()
-      if (!res.ok) throw new Error(json.error)
-      setProposal((p: any) => ({ ...p, status: 'sent' }))
-    } catch (e: any) {
-      alert('Failed to send: ' + e.message)
-    } finally {
-      setSending(false)
-    }
-  }
 
   function openResendModal() {
     setResendTo(proposal?.contact_email || '')
@@ -284,15 +267,6 @@ export default function ProposalDetailPage() {
                className="nv-btn nv-btn--outlined nv-btn--md">
               View ↗
             </a>
-          )}
-          {canSend && (
-            <button
-              className="nv-btn nv-btn--solid nv-btn--md"
-              onClick={handleSend}
-              disabled={sending}
-            >
-              {sending ? 'Sending…' : '✉ Send Proposal'}
-            </button>
           )}
           {canSend && (
             <Link href={`/proposals/new?edit=${proposal.id}`}

@@ -21,7 +21,7 @@ import {
   uploadAttachment,
   deleteAttachment,
 } from './routes/proposals'
-import { syncM365Staff } from './routes/staff'
+import { syncM365Staff, getMySignature, updateMySignature, getMyProfile, updateMyProfile } from './routes/staff'
 import { submitFeedback } from './routes/feedback'
 import {
   getRegionSettings, getEntitySettings, updateEntitySettings,
@@ -196,6 +196,24 @@ async function route(
   // Sync all Nuvho users from Microsoft 365 (Graph) into the staff table
   if (path === '/staff/sync-m365' && method === 'POST') {
     return syncM365Staff(request, env, session)
+  }
+
+  // NUVCL-117: the signed-in user's own signature (Settings → User Settings;
+  // pre-fills, still overridably, the proposal wizard's Signature step)
+  if (path === '/staff/me/signature' && method === 'GET') {
+    return getMySignature(env, session)
+  }
+  if (path === '/staff/me/signature' && method === 'PATCH') {
+    return updateMySignature(request, env, session)
+  }
+
+  // The signed-in user's own profile — currently just role/position,
+  // self-editable from Settings → User Settings.
+  if (path === '/staff/me' && method === 'GET') {
+    return getMyProfile(env, session)
+  }
+  if (path === '/staff/me' && method === 'PATCH') {
+    return updateMyProfile(request, env, session)
   }
 
   // Platform feedback / report an issue — emails odysseus.ambut@nuvho.com

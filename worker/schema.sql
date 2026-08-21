@@ -16,6 +16,14 @@ CREATE TABLE IF NOT EXISTS staff (
   m365_user_id      TEXT,
   m365_upn          TEXT,
   timezone          TEXT NOT NULL DEFAULT 'Australia/Sydney',
+  -- NUVCL-117: per-user signature, set once from Settings → User Settings
+  -- and used to pre-fill (still overridably) the proposal wizard's
+  -- Signature step. A typed signature always renders as this staff
+  -- member's own `name` above — no separate "signatory name" column.
+  -- See migrations/0012_staff_signature.sql for the already-deployed-DB
+  -- migration pairing this schema change.
+  signature_method   TEXT,    -- 'type' | 'draw' | NULL (not set)
+  signature_data_url  TEXT,   -- drawn signature, base64 PNG data URL
   created_at        TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
 );

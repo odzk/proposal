@@ -264,33 +264,36 @@ export interface ProposalDraft {
   // Step 2 — Service Lines
   services: DraftServiceLine[]
 
-  // Step 5 — Sender
+  // Sender — no longer its own wizard step (NUVCL-118: the standalone
+  // Sender step and its AI email-message composer and attachment upload
+  // were removed; the platform is scoped to PDF/DOC generation only for
+  // now). staffId still auto-defaults to the signed-in user; accountManagerId
+  // and message are now set from Step 1 (Hotel Details) — accountManagerId
+  // because it's a client-relationship field, and message because it's
+  // actually the letter's opening paragraph (see documentModel.ts's
+  // introMessage), not merely an email body. subject/cc/bcc are gone from
+  // the wizard; the worker's sendProposalEmail() (used by the Proposal
+  // Details page's Send button) still falls back to its own defaults when
+  // those DB columns are blank.
   sender: {
     staffId: string
     accountManagerId: string
-    // Email subject line for the proposal-sent email. Left blank falls back
-    // to the worker's default "Your Nuvho Proposal — {hotel name}" (see
-    // sendProposalEmail() in worker/src/routes/proposals.ts).
-    subject: string
     message: string
-    // Comma-separated additional recipients on the proposal-sent email.
-    cc:  string
-    bcc: string
   }
 
-  // Step 6 — Cover
+  // Step 5 — Cover
   cover: {
     coverUrl: string
   }
 
-  // Step 7 — Terms & Conditions, and Step 8 — Signature. Both steps share
-  // this same `terms` slice (clauses/validityDays render on Step 7;
+  // Step 6 — Terms & Conditions, and Step 7 — Signature. Both steps share
+  // this same `terms` slice (clauses/validityDays render on Step 6;
   // signatureRequired/signatureMethod/signatoryName/signatoryTitle/
-  // signatureDataUrl/signatureMessage render on Step 8) since the worker
+  // signatureDataUrl/signatureMessage render on Step 7) since the worker
   // persists them together as a single proposal_terms row.
   terms: ProposalTerms
 
-  // Step 9 — Preview
+  // Step 8 — Preview
   preview: {
     recipientEmail: string
   }

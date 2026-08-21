@@ -447,43 +447,13 @@ a.nv-sidebar-subnav-item.nv-sidebar-subnav-item--active {
     z-index: 1;
   }
 
-  /* Everything after the cover (Letter, Background, Scope of Works, Nuvho
-     Pty Ltd, Fee Structure, legal footer, Appendix) no longer forces a page
-     break per section — it flows as one continuous document, so a typical
-     proposal now prints onto one or two pages after the cover instead of
-     one page per section. Content that's genuinely too long to fit (many
-     services, a long clause list, etc.) still spills onto further pages
-     naturally rather than being force-shrunk to the point of being unreadable.
+  /* Letter, after the cover, is always its own full page (page 2) so the
+     signature block never shares a sheet with Background/Scope of Works —
+     it keeps the same page-margin treatment sections used to have
+     individually (see .doc-flow below for why sections no longer do).
 
      padding: 15mm 14mm is what used to be the @page margin, now that
-     @page is 0 everywhere (see that rule's comment for why).
-
-     NUVCL-109: this used to be top-only padding (no bottom), because CSS
-     padding on a box that fragments across several physical pages by
-     default (box-decoration-break: slice, the initial value) only renders
-     at that box's own FIRST and LAST fragment — never on interior
-     fragments. A section spanning 3+ physical pages on its own (e.g.
-     Scope of Works for a hotel with many services — an ordinary case, not
-     a rare one) therefore had its middle pages sitting flush against both
-     the physical top AND bottom edge, which is exactly the "margins are
-     off on page 3 and onward" bug reported against a real generated PDF.
-     box-decoration-break: clone (plus the -webkit- prefix Chromium needs
-     pre-v130) makes the padding re-apply on EVERY fragment, not just the
-     first/last, which is the actual fix for that — verified in headless
-     Chromium (v141) against a synthetic 4-page section, giving a correct
-     15mm/15mm top/bottom margin on every interior page. Firefox has had
-     full native support for clone across page-fragmentation (not just
-     multicol) for a long time, well before Chromium's v130 catch-up, so
-     this is expected to be the more cross-browser-correct behavior, not a
-     narrower one-engine patch like earlier iterations of this file's fix.
-
-     One minor, accepted cosmetic side effect of restoring bottom padding:
-     when two short sections land on the same physical page (e.g.
-     Background ends and Scope of Works starts on the same sheet),
-     Background's padding-bottom + Scope's padding-top + the 6mm margin
-     below stack into a ~36mm gap instead of a tight 6mm one. That's a
-     one-time, minor whitespace cost versus the multi-page margin bug this
-     fixes, which recurs on every interior page of every longer section. */
+     @page is 0 everywhere (see that rule's comment for why). */
   #proposal-print-root .doc-page:not(.doc-cover) {
     max-width: none;
     box-shadow: none;
@@ -497,20 +467,49 @@ a.nv-sidebar-subnav-item.nv-sidebar-subnav-item--active {
     page-break-after: auto;
     break-after: auto;
   }
-
-  /* Letter is the one exception to the "flow continuously" rule above: it's
-     always its own full page (page 2, right after the cover) so the
-     signature block never shares a sheet with Background/Scope of Works.
-     Same specificity as .doc-page:not(.doc-cover) above (one ID + two
-     classes either way), so this must stay declared AFTER it in the
-     stylesheet to win the override — reordering these two rules would
-     silently undo the forced break. */
   #proposal-print-root .doc-page.doc-letter {
     page-break-after: always;
     break-after: page;
   }
   #proposal-print-root .doc-page:not(.doc-cover) p {
     margin-bottom: 6px;
+  }
+
+  /* NUVCL-120: Background, Scope of Works, Nuvho Pty Ltd, Fee Structure,
+     the legal footer, and Appendix now flow inside ONE shared .doc-flow
+     wrapper instead of each being its own separately-padded .doc-page — see
+     the ProposalDocument.tsx markup and its on-screen .doc-flow/.doc-section
+     rules for the full explanation. .doc-flow keeps the same
+     box-decoration-break: clone treatment the old per-section rule had
+     (NUVCL-109's fix for a section spanning several physical pages having
+     no top/bottom margin on its interior pages), but now applies it ONCE
+     per physical page to the whole flowing block rather than once per
+     SECTION — which is what fixes the "huge blank space under Background
+     before Scope of Works" bug: previously, when two short sections landed
+     on the same physical page, section A's bottom padding + its 6mm margin
+     + section B's top padding stacked into a ~36mm gap. With a single
+     shared wrapper there's only one top/bottom padding per physical page no
+     matter how many sections land on it; individual sections only need the
+     small margin-bottom below for visual rhythm. */
+  #proposal-print-root .doc-flow {
+    max-width: none;
+    box-shadow: none;
+    border-radius: 0;
+    margin: 0;
+    padding: 15mm 14mm;
+    box-decoration-break: clone;
+    -webkit-box-decoration-break: clone;
+    font-size: 11px;
+    line-height: 1.4;
+  }
+  #proposal-print-root .doc-flow p {
+    margin-bottom: 6px;
+  }
+  #proposal-print-root .doc-section {
+    margin: 0 0 6mm;
+  }
+  #proposal-print-root .doc-section:last-child {
+    margin-bottom: 0;
   }
 
   /* Denser print typography than the on-screen sizing (13px/1.7 is roomy

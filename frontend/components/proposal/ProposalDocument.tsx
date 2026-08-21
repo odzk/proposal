@@ -3,6 +3,7 @@
 import React from 'react'
 import { NuvhoLogo } from '@/components/ui/NuvhoLogo'
 import { FEE_TYPES } from '@/lib/serviceCatalog'
+import { parseCoverUrl } from '@/lib/documentModel'
 import type { ProposalDocModel } from '@/lib/documentModel'
 
 /* Read-only rendering of a normalized ProposalDocModel in the same letter +
@@ -30,7 +31,7 @@ function buildTocItems(companyName: string, visible: {
   if (visible.showScope)      items.push({ label: 'Scope of Works', id: 'doc-section-scope' })
   items.push({ label: companyName || 'Nuvho Pty Ltd', id: 'doc-section-nuvho' })
   if (visible.showFees)       items.push({ label: 'Fee Structure', id: 'doc-section-fees' })
-  if (visible.showAppendix)   items.push({ label: 'Appendix 1 – Terms & Conditions', id: 'doc-section-appendix' })
+  if (visible.showAppendix)   items.push({ label: 'Terms & Conditions', id: 'doc-section-appendix' })
   return items
 }
 
@@ -61,6 +62,14 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
     document.getElementById(id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
   }
 
+  // NUVCL-119: four branded A4 cover layouts (from Odysseus's "A4 cover page
+  // templates" design export), selected in the wizard's Cover Image step and
+  // stored as a `branded:<id>` sentinel in the existing coverUrl field — see
+  // BRANDED_COVER_TEMPLATES in app/(app)/proposals/new/page.tsx. Any other
+  // coverUrl value (a real image URL, or empty) renders the original photo
+  // cover unchanged below, so existing proposals are unaffected.
+  const { template: brandedTemplate, photoUrl: brandedPhotoUrl } = parseCoverUrl(model.coverUrl || '')
+
   return (
     <div className="doc-preview" id="proposal-print-root">
       {/* Cover — NUVCL-102: full-bleed A4 image. The "Nuvho PTY LTD" wordmark
@@ -69,14 +78,111 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
           shown on the cover is removed per the ticket so the cover is pure
           branding/title, with the print-only full-page sizing handled in
           globals.css. */}
-      <div className="doc-page doc-cover"
-        style={model.coverUrl ? ({ '--doc-cover-url': `url(${model.coverUrl})` } as React.CSSProperties) : undefined}>
-        <div className="doc-cover__scrim">
-          <NuvhoLogo variant="white" height={120} />
-          <div className="doc-cover__title">{model.title}</div>
-          <div className="doc-cover__hotel">{model.hotelName || '[Hotel Name]'}</div>
+      {brandedTemplate === 'circles' && (
+        <div className="doc-page doc-cover doc-cover--circles">
+          <span className="doc-cover-circles__arc" />
+          <div className="doc-cover-circles__top">
+            <NuvhoLogo variant="white" height={36} />
+            <span className="doc-cover-circles__badge">Confidential</span>
+          </div>
+          <div className="doc-cover-circles__body">
+            <div className="doc-cover-circles__category">{model.title || 'Proposal'}</div>
+            <div className="doc-cover-circles__heading">{model.hotelName || '[Hotel Name]'}</div>
+            <div className="doc-cover-circles__meta">
+              <span>Issued</span>
+              <strong>{model.dateIssued}</strong>
+            </div>
+          </div>
+          <div className="doc-cover-circles__footer">nuvho.com</div>
         </div>
-      </div>
+      )}
+
+      {brandedTemplate === 'split' && (
+        <div className="doc-page doc-cover doc-cover--split">
+          <div className="doc-cover-split__rail">
+            <NuvhoLogo variant="white" height={45} />
+            <div>
+              <div className="doc-cover-split__rail-label">Divisions engaged</div>
+              {/* Fixed placeholder list — there's no per-proposal "divisions
+                  engaged" field yet; revisit if that becomes a real input. */}
+              <ul className="doc-cover-split__rail-list">
+                <li><span className="doc-cover-split__dot" />Revenue</li>
+                <li><span className="doc-cover-split__dot" />Marketing</li>
+                <li><span className="doc-cover-split__dot" />Systems</li>
+              </ul>
+            </div>
+            <div className="doc-cover-split__copyright">© {model.companyName || 'Nuvho Systems Pty Ltd'}</div>
+          </div>
+          <div className="doc-cover-split__main">
+            <div
+              className="doc-cover-split__image"
+              style={brandedPhotoUrl ? { backgroundImage: `url(${brandedPhotoUrl})` } : undefined}
+            >
+              {!brandedPhotoUrl && <span className="doc-cover-split__image-placeholder" />}
+            </div>
+            <div className="doc-cover-split__content">
+              <div className="doc-cover-split__tags">
+                <span className="doc-cover-split__eyebrow">Report</span>
+              </div>
+              <div className="doc-cover-split__heading">{model.title || 'Proposal'}</div>
+              {/* Placeholder summary copy — no dedicated cover-blurb field on
+                  the proposal yet; revisit if that becomes a real input. */}
+              <p className="doc-cover-split__summary">
+                A structured engagement to strengthen commercial performance across revenue, marketing and systems.
+              </p>
+              <div className="doc-cover-split__footer-row">
+                <div>
+                  <div className="doc-cover-split__eyebrow">Prepared for</div>
+                  <div className="doc-cover-split__prepared">
+                    {model.contactName || '[Client Name]'}{model.contactTitle && `, ${model.contactTitle}`}
+                  </div>
+                </div>
+                <div className="doc-cover-split__date">{model.dateIssued}</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {brandedTemplate === 'editorial' && (
+        <div className="doc-page doc-cover doc-cover--editorial">
+          <div className="doc-cover-editorial__spine" />
+          <div className="doc-cover-editorial__body">
+            <NuvhoLogo variant="primary" height={70} />
+            <div className="doc-cover-editorial__title">{model.title}</div>
+            <div className="doc-cover-editorial__hotel">{model.hotelName || '[Hotel Name]'}</div>
+            {tocItems.length > 0 && (
+              <ul className="doc-cover-editorial__toc">
+                {tocItems.map(item => <li key={item.id}>{item.label}</li>)}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+
+      {brandedTemplate === 'sidebar' && (
+        <div className="doc-page doc-cover doc-cover--sidebar">
+          <div className="doc-cover-sidebar__rail">
+            <NuvhoLogo variant="white" height={80} />
+            <span className="doc-cover-sidebar__badge">Confidential</span>
+          </div>
+          <div className="doc-cover-sidebar__main">
+            <div className="doc-cover-editorial__title">{model.title}</div>
+            <div className="doc-cover-editorial__hotel">{model.hotelName || '[Hotel Name]'}</div>
+          </div>
+        </div>
+      )}
+
+      {!brandedTemplate && (
+        <div className="doc-page doc-cover"
+          style={model.coverUrl ? ({ '--doc-cover-url': `url(${model.coverUrl})` } as React.CSSProperties) : undefined}>
+          <div className="doc-cover__scrim">
+            <NuvhoLogo variant="white" height={120} />
+            <div className="doc-cover__title">{model.title}</div>
+            <div className="doc-cover__hotel">{model.hotelName || '[Hotel Name]'}</div>
+          </div>
+        </div>
+      )}
 
       {/* Letter — always its own printed page (page 2, right after the cover);
           see the .doc-letter print rule in globals.css for the forced
@@ -110,7 +216,7 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         </div>
         <div className="doc-re">RE: {model.title}</div>
         <p>Dear {model.contactName || '[Client Name]'},</p>
-        {/* introMessage is authored via TinyMCE (wizard Step 5) — always HTML */}
+        {/* introMessage is authored via the rich-text editor on wizard Step 1 (since NUVCL-118) — always HTML */}
         <div className="doc-rich-text" dangerouslySetInnerHTML={{ __html: model.introMessage }} />
 
         <div className="doc-toc">
@@ -140,132 +246,158 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
           {model.senderRoleLabel || '[Sending team member not yet selected]'}
           {model.senderEmail && <><br />e: {model.senderEmail}</>}
         </div>
-      </div>
-
-      {/* Background — hidden when Services (Step 2) was skipped, i.e. there's
-          nothing to describe. */}
-      {showBackground && (
-        <div className="doc-page" id="doc-section-background">
-          <h3 className="doc-heading">Background</h3>
-          <p>
-            {model.hotelName || 'The property'} has engaged Nuvho to deliver {model.title.toLowerCase()}, with a
-            strong focus on maximising commercial performance and elevating the guest experience. This proposal
-            outlines our recommended scope of works, fee structure and terms of engagement.
-          </p>
-        </div>
-      )}
-
-      {/* Scope of Works — hidden when Services (Step 2) was skipped. */}
-      {showScope && (
-        <div className="doc-page" id="doc-section-scope">
-          <h3 className="doc-heading">Scope of Works</h3>
-          <p>
-            We develop a long-term and collaborative partnership with our clients, delivering services and value
-            across the spectrum of hotel operations.
-          </p>
-          {model.services.map(s => {
-            let lastSection: string | null = null
-            return (
-              <div key={s.code} className="doc-service-block">
-                {multiSvc && <h4 className="doc-subheading">{s.label}</h4>}
-                {s.scopeItems.filter(it => it.enabled).map(it => {
-                  const showHeading = it.sectionHeading !== lastSection
-                  lastSection = it.sectionHeading
-                  return (
-                    <React.Fragment key={it.id}>
-                      {showHeading && <h5 className="doc-subheading2">{it.sectionHeading}</h5>}
-                      <div className="doc-bullet">{it.text || '—'}</div>
-                    </React.Fragment>
-                  )
-                })}
-              </div>
-            )
-          })}
-        </div>
-      )}
-
-      {/* Nuvho Pty Ltd (Company Name + About — Settings → Region Settings) */}
-      <div className="doc-page" id="doc-section-nuvho">
-        <h3 className="doc-heading">{model.companyName || 'Nuvho Pty Ltd'}</h3>
-        <p>
-          {model.aboutNuvho || (
-            'Nuvho is a new breed of hotel services company, providing tailored solutions to clients from a ' +
-            'services, systems and operational perspective. We partner with independent and boutique hotels to ' +
-            'deliver the commercial capability of a larger group, without the overhead.'
-          )}
-        </p>
-      </div>
-
-      {/* Fee Structure — hidden together with Background and Scope of Works
-          whenever Services (Step 2) was skipped. */}
-      {showFees && (
-        <div className="doc-page" id="doc-section-fees">
-          <h3 className="doc-heading">Fee Structure</h3>
-          <p>
-            The following table outlines the associated fee structure of our services. Our fees exclude GST, which
-            will be charged in addition where applicable.
-          </p>
-          <table className="doc-fee-table">
-            <thead>
-              <tr><th>Component</th><th>Fee Type</th><th>Amount</th><th>Months</th><th>Note</th></tr>
-            </thead>
-            <tbody>
-              {model.services.map(s => (
-                <React.Fragment key={s.code}>
-                  {multiSvc && (
-                    <tr className="doc-fee-table__group"><td colSpan={5}>{s.label}</td></tr>
-                  )}
-                  {s.feeRows.map(row => (
-                    <tr key={row.id}>
-                      <td>{row.component || '—'}</td>
-                      <td>{FEE_TYPES.find(f => f.value === row.feeType)?.label || row.feeType}</td>
-                      <td>{row.fee === '' ? '—' : `${model.currencySymbol}${Number(row.fee).toLocaleString()}`}</td>
-                      <td>{row.term === '' ? '—' : row.term}</td>
-                      <td>{row.note || ''}</td>
-                    </tr>
-                  ))}
-                </React.Fragment>
-              ))}
-            </tbody>
-          </table>
-          {model.grandTotalMonthly > 0 && (
-            <div className="doc-fee-total">Combined monthly total: {model.currencySymbol}{model.grandTotalMonthly.toLocaleString()}</div>
-          )}
-          {model.footnotes.length > 0 && (
-            <ul className="doc-footnotes">
-              {model.footnotes.map(f => <li key={f.id}>{f.text}</li>)}
-            </ul>
-          )}
-        </div>
-      )}
-
-      {/* Quote Approval section removed — the sender's signature now lives
-          in the letter above, and client acceptance happens via the public
-          sign page's own checkbox/approval flow rather than this static
-          statement. The legal footer is unrelated boilerplate (generic
-          company-registration text), so it always renders on its own page
-          below regardless. */}
-      {model.footerText && (
-        <div className="doc-page">
-          <div className="doc-legal-footer">
+        {/* Legal entity / registration line (e.g. "Nuvho Pty Ltd - ABN
+            62 622 629 672") shown right under the letter's sign-off, in
+            addition to — not instead of — the fuller legal footer that
+            still renders lower in the document near the Appendix. Sourced
+            from the same region/entity footerText setting so it stays in
+            sync automatically if that text is ever updated. */}
+        {model.footerText && (
+          <div className="doc-letter-footer">
             {model.footerText.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
-      {/* Appendix — Terms & Conditions — hidden when Services (Step 2) was
-          skipped, or when the resolved entity has no clauses configured. */}
-      {showAppendix && (
-        <div className="doc-page" id="doc-section-appendix">
-          <h3 className="doc-heading">Appendix 1 – Terms &amp; Conditions</h3>
-          {model.clauses.map(c => (
-            <div key={c.id} className="doc-clause">
-              <h5 className="doc-subheading2">{c.heading}</h5>
-              <p>{c.text}</p>
-            </div>
-          ))}
+      {/* NUVCL-120: Background through Appendix now share ONE flowing
+          container (.doc-flow) instead of each being its own separate
+          .doc-page "card". This fixes two things at once: (1) on screen,
+          the preview no longer shows a stack of separately-carded sections
+          floating on a grey background — it's one continuous sheet, matching
+          what the PDF actually renders; (2) in print, the 15mm page-margin
+          padding (see globals.css) is now applied ONCE per physical page to
+          the shared wrapper instead of once per SECTION, which is what
+          caused the ~36mm blank gap whenever two short sections (e.g.
+          Background and Scope of Works) landed on the same sheet — each
+          section's own top+bottom padding plus its margin was stacking on
+          top of the next section's padding. Individual sections below only
+          need a small margin-bottom now for visual separation. */}
+      <div className="doc-flow">
+        {/* Background — hidden when Services (Step 2) was skipped, i.e.
+            there's nothing to describe. */}
+        {showBackground && (
+          <div className="doc-section" id="doc-section-background">
+            <h3 className="doc-heading">Background</h3>
+            <p>
+              {model.hotelName || 'The property'} has engaged Nuvho to deliver {model.title.toLowerCase()}, with a
+              strong focus on maximising commercial performance and elevating the guest experience. This proposal
+              outlines our recommended scope of works, fee structure and terms of engagement.
+            </p>
+          </div>
+        )}
+
+        {/* Scope of Works — hidden when Services (Step 2) was skipped. */}
+        {showScope && (
+          <div className="doc-section" id="doc-section-scope">
+            <h3 className="doc-heading">Scope of Works</h3>
+            <p>
+              We develop a long-term and collaborative partnership with our clients, delivering services and value
+              across the spectrum of hotel operations.
+            </p>
+            {model.services.map(s => {
+              let lastSection: string | null = null
+              return (
+                <div key={s.code} className="doc-service-block">
+                  {multiSvc && <h4 className="doc-subheading">{s.label}</h4>}
+                  {s.scopeItems.filter(it => it.enabled).map(it => {
+                    const showHeading = it.sectionHeading !== lastSection
+                    lastSection = it.sectionHeading
+                    return (
+                      <React.Fragment key={it.id}>
+                        {showHeading && <h5 className="doc-subheading2">{it.sectionHeading}</h5>}
+                        <div className="doc-bullet">{it.text || '—'}</div>
+                      </React.Fragment>
+                    )
+                  })}
+                </div>
+              )
+            })}
+          </div>
+        )}
+
+        {/* Nuvho Pty Ltd (Company Name + About — Settings → Region Settings) */}
+        <div className="doc-section" id="doc-section-nuvho">
+          <h3 className="doc-heading">{model.companyName || 'Nuvho Pty Ltd'}</h3>
+          <p>
+            {model.aboutNuvho || (
+              'Nuvho is a new breed of hotel services company, providing tailored solutions to clients from a ' +
+              'services, systems and operational perspective. We partner with independent and boutique hotels to ' +
+              'deliver the commercial capability of a larger group, without the overhead.'
+            )}
+          </p>
         </div>
-      )}
+
+        {/* Fee Structure — hidden together with Background and Scope of Works
+            whenever Services (Step 2) was skipped. */}
+        {showFees && (
+          <div className="doc-section" id="doc-section-fees">
+            <h3 className="doc-heading">Fee Structure</h3>
+            <p>
+              The following table outlines the associated fee structure of our services. Our fees exclude GST, which
+              will be charged in addition where applicable.
+            </p>
+            <table className="doc-fee-table">
+              <thead>
+                <tr><th>Component</th><th>Fee Type</th><th>Amount</th><th>Months</th><th>Note</th></tr>
+              </thead>
+              <tbody>
+                {model.services.map(s => (
+                  <React.Fragment key={s.code}>
+                    {multiSvc && (
+                      <tr className="doc-fee-table__group"><td colSpan={5}>{s.label}</td></tr>
+                    )}
+                    {s.feeRows.map(row => (
+                      <tr key={row.id}>
+                        <td>{row.component || '—'}</td>
+                        <td>{FEE_TYPES.find(f => f.value === row.feeType)?.label || row.feeType}</td>
+                        <td>{row.fee === '' ? '—' : `${model.currencySymbol}${Number(row.fee).toLocaleString()}`}</td>
+                        <td>{row.term === '' ? '—' : row.term}</td>
+                        <td>{row.note || ''}</td>
+                      </tr>
+                    ))}
+                  </React.Fragment>
+                ))}
+              </tbody>
+            </table>
+            {model.grandTotalMonthly > 0 && (
+              <div className="doc-fee-total">Combined monthly total: {model.currencySymbol}{model.grandTotalMonthly.toLocaleString()}</div>
+            )}
+            {model.footnotes.length > 0 && (
+              <ul className="doc-footnotes">
+                {model.footnotes.map(f => <li key={f.id}>{f.text}</li>)}
+              </ul>
+            )}
+          </div>
+        )}
+
+        {/* Quote Approval section removed — the sender's signature now lives
+            in the letter above, and client acceptance happens via the public
+            sign page's own checkbox/approval flow rather than this static
+            statement. The legal footer is unrelated boilerplate (generic
+            company-registration text), so it always renders as its own
+            section below regardless. */}
+        {model.footerText && (
+          <div className="doc-section">
+            <div className="doc-legal-footer">
+              {model.footerText.split('\n').map((line, i) => <React.Fragment key={i}>{line}<br /></React.Fragment>)}
+            </div>
+          </div>
+        )}
+
+        {/* Appendix — Terms & Conditions — hidden when Services (Step 2) was
+            skipped, or when the resolved entity has no clauses configured. */}
+        {showAppendix && (
+          <div className="doc-section" id="doc-section-appendix">
+            <h3 className="doc-heading">Terms &amp; Conditions</h3>
+            {model.clauses.map(c => (
+              <div key={c.id} className="doc-clause">
+                <h5 className="doc-subheading2">{c.heading}</h5>
+                <p>{c.text}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       <style jsx>{`
         .doc-preview { background: var(--nv-surface-page); padding: 24px 0; border-radius: 12px; }
@@ -275,6 +407,20 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
           font-size: 13px; line-height: 1.7; color: var(--nv-text-body);
         }
         .doc-page p { margin-bottom: 12px; }
+        /* NUVCL-120: Background..Appendix render inside ONE .doc-flow card
+           (instead of one .doc-page card each) so the on-screen preview is a
+           single continuous sheet, matching what actually prints — no
+           per-section shadow/rounded-corner "card" that the real PDF never
+           had. .doc-section is just a content block inside that shared card,
+           with only enough margin to visually separate it from the next one. */
+        .doc-flow {
+          background: white; max-width: 680px; margin: 0 auto 18px; padding: 40px 48px;
+          border-radius: 4px; box-shadow: var(--nv-shadow-sm); font-family: var(--font-raleway);
+          font-size: 13px; line-height: 1.7; color: var(--nv-text-body);
+        }
+        .doc-flow p { margin-bottom: 12px; }
+        .doc-section { margin-bottom: 32px; }
+        .doc-section:last-child { margin-bottom: 0; }
         .doc-cover {
           position: relative;
           height: 460px; background-image: var(--doc-cover-url, none); background-size: cover; background-position: center;
@@ -292,14 +438,97 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
         .doc-cover__hotel { color: rgba(255,255,255,0.92); font-size: 14px; }
         .doc-cover__date  { color: rgba(255,255,255,0.7); font-size: 12px; }
 
+        /* NUVCL-119 — branded cover templates (redrawn to match the client's
+           two reference mockups: a solid dark cover with a decorative arc,
+           and a sidebar + photo "report" layout). */
+        .doc-cover--circles {
+          background-image: none; background-color: var(--nv-blue-slate);
+          flex-direction: column; align-items: stretch; justify-content: space-between;
+          padding: 40px 44px; position: relative; overflow: hidden;
+        }
+        .doc-cover-circles__arc {
+          position: absolute; left: -220px; bottom: -220px; width: 520px; height: 520px;
+          border: 1px solid rgba(255,255,255,0.22); border-radius: 50%; pointer-events: none;
+        }
+        .doc-cover-circles__top { display: flex; align-items: center; justify-content: space-between; z-index: 1; }
+        .doc-cover-circles__badge {
+          font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: rgba(255,255,255,0.85);
+          border: 1px solid rgba(255,255,255,0.4); border-radius: 999px; padding: 5px 14px;
+        }
+        .doc-cover-circles__body { z-index: 1; margin-top: auto; }
+        .doc-cover-circles__category {
+          font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--nv-steel-blue); margin-bottom: 10px;
+        }
+        .doc-cover-circles__heading { font-family: var(--font-comfortaa); color: white; font-size: 30px; font-weight: 700; line-height: 1.15; }
+        .doc-cover-circles__meta {
+          display: flex; gap: 6px; margin-top: 18px; font-size: 10.5px; color: rgba(255,255,255,0.65);
+          text-transform: uppercase; letter-spacing: 0.08em;
+        }
+        .doc-cover-circles__meta strong { color: rgba(255,255,255,0.95); text-transform: none; letter-spacing: 0; font-size: 12px; }
+        .doc-cover-circles__footer { z-index: 1; font-size: 11px; color: rgba(255,255,255,0.5); margin-top: 24px; }
+
+        .doc-cover--split { background-image: none; background-color: transparent; align-items: stretch; padding: 0; }
+        .doc-cover-split__rail {
+          width: 30%; flex-shrink: 0; background: #1A3D4A; padding: 28px 22px;
+          /* align-items: flex-start prevents the default flex "stretch" from
+             pulling the logo <img> to the rail's full width (which distorted
+             its aspect ratio into a "stretched" look) */
+          display: flex; flex-direction: column; align-items: flex-start; justify-content: space-between; color: white;
+        }
+        .doc-cover-split__rail-label { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: rgba(255,255,255,0.55); margin-bottom: 10px; }
+        .doc-cover-split__rail-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 12.5px; color: rgba(255,255,255,0.92); }
+        .doc-cover-split__rail-list li { display: flex; align-items: center; gap: 8px; }
+        .doc-cover-split__dot { width: 7px; height: 7px; border-radius: 50%; background: var(--nv-steel-blue); flex-shrink: 0; }
+        .doc-cover-split__copyright { font-size: 9.5px; color: rgba(255,255,255,0.4); }
+        .doc-cover-split__main { flex: 1; display: flex; flex-direction: column; }
+        .doc-cover-split__image {
+          flex: 1; background-color: var(--nv-platinum); background-size: cover; background-position: center;
+          display: flex; align-items: center; justify-content: center;
+        }
+        .doc-cover-split__image-placeholder { width: 30px; height: 30px; border: 1.5px dashed var(--nv-border); border-radius: 4px; }
+        .doc-cover-split__content { background: white; padding: 22px 26px; }
+        .doc-cover-split__tags { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+        .doc-cover-split__eyebrow { font-size: 10px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--nv-steel-blue); font-weight: 700; }
+        .doc-cover-split__heading { font-family: var(--font-comfortaa); font-size: 19px; font-weight: 700; color: var(--nv-text-heading); margin-bottom: 6px; }
+        .doc-cover-split__summary { font-size: 11.5px; line-height: 1.5; color: var(--nv-text-muted); margin: 0 0 14px; }
+        .doc-cover-split__footer-row { display: flex; align-items: flex-end; justify-content: space-between; }
+        .doc-cover-split__prepared { font-size: 12px; color: var(--nv-text-body); font-weight: 600; }
+        .doc-cover-split__date { font-size: 11px; color: var(--nv-text-muted); }
+
+        .doc-cover--editorial { background-image: none; background-color: white; display: flex; align-items: stretch; padding: 0; }
+        .doc-cover-editorial__spine { width: 14px; flex-shrink: 0; background: var(--nv-blue-slate); }
+        .doc-cover-editorial__body { flex: 1; padding: 48px; display: flex; flex-direction: column; gap: 6px; }
+        .doc-cover-editorial__title { font-family: var(--font-comfortaa); color: var(--nv-blue-slate); font-size: 22px; font-weight: 700; margin-top: 14px; }
+        .doc-cover-editorial__hotel { color: var(--nv-text-body); font-size: 14px; }
+        .doc-cover-editorial__toc {
+          margin: 24px 0 0; padding: 16px 0 0; border-top: 1px solid var(--nv-border-hair);
+          list-style: none; display: flex; flex-direction: column; gap: 8px;
+          font-size: 13px; color: var(--nv-text-body);
+        }
+
+        .doc-cover--sidebar { background-image: none; background-color: white; display: flex; align-items: stretch; padding: 0; }
+        .doc-cover-sidebar__rail {
+          width: 34%; flex-shrink: 0; background: #1A3D4A; padding: 40px 28px;
+          display: flex; flex-direction: column; justify-content: space-between;
+        }
+        .doc-cover-sidebar__badge {
+          align-self: flex-start; font-family: var(--font-comfortaa); font-size: 10px;
+          letter-spacing: 0.12em; text-transform: uppercase; color: var(--nv-blue-slate);
+          background: var(--nv-platinum); border-radius: 999px; padding: 6px 14px;
+        }
+        .doc-cover-sidebar__main { flex: 1; padding: 48px; display: flex; flex-direction: column; justify-content: center; gap: 6px; }
+
         .doc-letterhead { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 16px; }
         .doc-letterhead__logo { flex-shrink: 0; }
         .doc-date    { font-size: 12px; color: var(--nv-text-muted); margin-top: 6px; }
         .doc-nuvho-address { font-size: 11.5px; color: var(--nv-text-muted); text-align: right; line-height: 1.5; }
-        .doc-address { margin-bottom: 16px; }
+        .doc-address { margin-bottom: 40px; }
         .doc-legal-footer {
           margin-top: 24px; padding-top: 12px; border-top: 1px solid var(--nv-border-hair);
           font-size: 10.5px; line-height: 1.6; color: var(--nv-text-muted);
+        }
+        .doc-letter-footer {
+          margin-top: 14px; font-size: 10px; line-height: 1.5; color: var(--nv-text-muted);
         }
         .doc-re      { font-weight: 700; margin-bottom: 16px; }
         .doc-toc     { margin: 18px 0; padding-left: 4px; }
@@ -330,7 +559,7 @@ export function ProposalDocument({ model }: { model: ProposalDocModel }) {
 
         .doc-rich-text :global(p) { margin: 0 0 10px; }
         .doc-rich-text :global(ul), .doc-rich-text :global(ol) { margin: 0 0 10px 20px; }
-        .doc-signature__mark { border-bottom: 1.5px solid var(--nv-border); padding-bottom: 8px; min-height: 60px; display: flex; align-items: flex-end; margin-top: 10px; }
+        .doc-signature__mark { padding-bottom: 8px; min-height: 60px; display: flex; align-items: flex-end; margin-top: 10px; }
         .doc-signature__script { font-family: var(--font-signature); font-size: 36px; color: var(--nv-text-heading); }
         .doc-signature__img { max-height: 80px; }
 

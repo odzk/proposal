@@ -5,35 +5,39 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import type {
   ProposalDraft, ServiceCode, Region, DraftServiceLine, ScopeItem, FeeRow,
   PricingFootnote, TermsClause, FeeType, RegionSettings, ServiceCategory,
-  ProposalAttachment,
 } from '@/lib/types'
 import {
   getServiceLabel, getServiceColor, FEE_TYPES, REGION_META, initScopeItems, initFeeRows,
   initFootnotes, initTerms, generateRowId, deriveFeeSummary,
 } from '@/lib/serviceCatalog'
-import { buildDocModelFromDraft } from '@/lib/documentModel'
+import { buildDocModelFromDraft, parseCoverUrl, buildCoverUrl, buildDefaultIntroMessage } from '@/lib/documentModel'
 import { ProposalDocument } from '@/components/proposal/ProposalDocument'
-import { SignaturePad } from '@/components/proposal/SignaturePad'
 import { RichTextEditor } from '@/components/proposal/RichTextEditor'
 import { setNavigationGuard } from '@/lib/navigationGuard'
 import { useSession } from '@/components/auth/AuthGuard'
 
+// NUVCL-118: the Sender step (staff picker + AI email-message composer +
+// attachments) was removed — the platform is scoped to PDF/DOC generation
+// only for now, not the send/e-signature workflow. Sender still auto-defaults
+// to the signed-in staff member (see the useEffect on draft.sender.staffId
+// below, from NUVCL-88); Account Manager moved into Step 1 (Hotel Details)
+// since it's a real client-relationship field, not a send-workflow field.
+// The Signature step was later removed too, for the same reason — see the
+// comment above Step7Preview below.
 const STEPS = [
   { id: 1, label: 'Hotel Details'  },
   { id: 2, label: 'Services'       },
   { id: 3, label: 'Scope'          },
   { id: 4, label: 'Pricing'        },
-  { id: 5, label: 'Sender'         },
-  { id: 6, label: 'Cover Image'    },
-  { id: 7, label: 'Terms'          },
-  { id: 8, label: 'Signature'      },
-  { id: 9, label: 'Preview & Save' },
+  { id: 5, label: 'Cover Image'    },
+  { id: 6, label: 'Terms'          },
+  { id: 7, label: 'Preview & Save' },
 ]
 
 // Steps that offer a "Skip" control beside Continue — Services/Scope/Pricing
 // detail and the Terms & Conditions review are all optional for proposals
 // that don't need them; Skip advances without running that step's validation.
-const SKIPPABLE_STEPS = [2, 3, 4, 7]
+const SKIPPABLE_STEPS = [2, 3, 4, 6]
 
 const EMPTY_DRAFT: ProposalDraft = {
   step: 1,
@@ -44,7 +48,7 @@ const EMPTY_DRAFT: ProposalDraft = {
   },
   regionSettings: { address: '', companyName: '', aboutNuvho: '', footerText: '', currency: REGION_META.au.currency },
   services:     [],
-  sender:       { staffId: '', accountManagerId: '', subject: '', message: '', cc: '', bcc: '' },
+  sender:       { staffId: '', accountManagerId: '', message: '' },
   cover:        { coverUrl: '' },
   terms:        initTerms('au'),
   preview:      { recipientEmail: '' },
@@ -64,16 +68,10 @@ export default function NewProposalPage() {
   const [loadingExisting, setLoadingExisting] = useState(!!editId)
   const session = useSession()
 
-  // Attachments (Step 5 — Sender). Split into two lists because a brand-new
-  // proposal has no id to upload against yet: newly-picked files sit in
-  // pendingAttachments (plain File objects, never JSON-serialized) until the
-  // next Save Draft / Generate & Send gives us a proposal id, at which point
-  // uploadPendingAttachments() sends them and clears the list. In edit mode,
-  // existingAttachments is pre-loaded from the fetched proposal below and its
-  // Remove button deletes immediately, since the id already exists.
-  const [pendingAttachments, setPendingAttachments]   = useState<File[]>([])
-  const [existingAttachments, setExistingAttachments] = useState<ProposalAttachment[]>([])
-  const [attachmentError, setAttachmentError]         = useState('')
+  // NUVCL-118: attachment upload (and the Sender step it lived under) was
+  // removed from the wizard — the platform is scoped to PDF/DOC generation
+  // only for now. proposal_attachments/the attachment endpoints still exist
+  // on the worker untouched; there's just no wizard UI feeding them anymore.
 
   // Unsaved-changes guard — lets AppShell warn before navigating away from
   // an in-progress wizard (new or edit). baselineRef captures the draft's
@@ -142,7 +140,7 @@ export default function NewProposalPage() {
 
   // Legal entities (Nuvho Master Registry, same data Settings → Entities
   // lists) — used by Step 7's Governing Entity picker. Fetched once here
-  // (not inside Step7Terms) for the same reason as regionSettingsMap/
+  // (not inside Step6Terms) for the same reason as regionSettingsMap/
   // serviceCategories above: the step component unmounts on every step
   // change, which would otherwise drop an in-flight fetch. Same
   // /registry/entities endpoint the Step 1 "Add Hotel Group"/"Sync to
@@ -158,7 +156,7 @@ export default function NewProposalPage() {
         const data = await res.json()
         if (!res.ok || cancelled) return
         setEntities(data.data?.entities || [])
-      } catch { /* Step7Terms just shows an empty/loading select if this never resolves */ }
+      } catch { /* Step6Terms just shows an empty/loading select if this never resolves */ }
       finally { if (!cancelled) setEntitiesLoading(false) }
     })()
     return () => { cancelled = true }
@@ -315,13 +313,9 @@ export default function NewProposalPage() {
           sender:  {
             staffId: p.sender_staff_id || '',
             accountManagerId: p.account_manager_stf_id || '',
-            subject: p.sender_subject || '',
             message: p.sender_message || '',
-            cc:  p.sender_cc || '',
-            bcc: p.sender_bcc || '',
           },
           cover:   { coverUrl: p.cover_url || '' },
-          // (attachments handled separately — see setExistingAttachments below)
           // Spread over initTerms() defaults, not just `p.terms || initTerms(...)`,
           // so proposals saved before signatureMethod/signatureDataUrl existed
           // (or before the Worker migration adding those D1 columns has run)
@@ -329,7 +323,6 @@ export default function NewProposalPage() {
           terms: { ...initTerms((p.region || 'au') as Region), ...(p.terms || {}) },
           preview: { recipientEmail: p.contact_email || '' },
         })
-        setExistingAttachments(Array.isArray(p.attachments) ? p.attachments : [])
       } catch (e: any) {
         if (!cancelled) setErrors({ submit: e.message || 'Failed to load proposal for editing' })
       } finally {
@@ -347,6 +340,55 @@ export default function NewProposalPage() {
   React.useEffect(() => {
     if (editId || !session?.staffId) return
     setDraft(d => d.sender.staffId ? d : { ...d, sender: { ...d.sender, staffId: session.staffId! } })
+  }, [editId, session])
+
+  // Pre-fill Step 1's "Personal message" editor with a real, editable
+  // starting paragraph for a brand-new proposal, so staff see actual text
+  // instead of an empty field that only relies on documentModel.ts's
+  // invisible build-time fallback (buildDefaultIntroMessage — same text).
+  // Service/hotel name aren't chosen yet this early in the wizard, so this
+  // uses literal `[service]`/`[Hotel Name]` placeholders for staff to fill
+  // in. Never runs on an edit-mode load, and only while the field is still
+  // at its initial empty state, so it doesn't clobber a manual edit made
+  // afterwards — same guard as the staffId effect above.
+  React.useEffect(() => {
+    if (editId) return
+    setDraft(d => d.sender.message ? d : ({
+      ...d,
+      sender: { ...d.sender, message: buildDefaultIntroMessage('[service]', d.hotel.name || '[Hotel Name]') },
+    }))
+  }, [editId])
+
+  // NUVCL-117: pre-fill Step 7's Signature fields from the signed-in user's
+  // saved Settings signature (Settings → User Settings), for new proposals
+  // only — never overriding an edit-mode load (matches the sender.staffId
+  // effect above). Only fills in when the fields are still at their initial
+  // empty state, so it never clobbers a manual change made afterwards, and
+  // always leaves signatureRequired/method fully overridable per proposal.
+  React.useEffect(() => {
+    if (editId || !session?.staffId) return
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/staff/me/signature`, { credentials: 'include' })
+        const data = await res.json()
+        if (!res.ok || cancelled) return
+        const { signatoryName, signatureMethod, signatureDataUrl } = data.data || {}
+        if (!signatureMethod) return   // nothing saved in Settings yet
+        setDraft(d => (d.terms.signatoryName || d.terms.signatureDataUrl) ? d : {
+          ...d,
+          terms: {
+            ...d.terms,
+            signatureMethod:  signatureMethod,
+            signatoryName:    signatoryName || '',
+            signatureDataUrl: signatureMethod === 'draw' ? (signatureDataUrl || '') : d.terms.signatureDataUrl,
+          },
+        })
+      } catch {
+        // Best-effort pre-fill only — Step 7 still works via manual entry if this fails.
+      }
+    })()
+    return () => { cancelled = true }
   }, [editId, session])
 
   React.useEffect(() => {
@@ -444,10 +486,7 @@ export default function NewProposalPage() {
           currency:         draft.regionSettings.currency,
           sender_staff_id:  draft.sender.staffId,
           account_manager_stf_id: draft.sender.accountManagerId || null,
-          sender_subject:   draft.sender.subject,
           sender_message:   draft.sender.message,
-          sender_cc:        draft.sender.cc,
-          sender_bcc:       draft.sender.bcc,
           cover_url:        draft.cover.coverUrl,
           hubspot_deal_id:  draft.hotel.hubspotDealId,
           services:         draft.services,
@@ -470,74 +509,14 @@ export default function NewProposalPage() {
     return data.data.id as string
   }
 
-  // Attachments (Step 5 — Sender) — see the pendingAttachments/
-  // existingAttachments state comment above for why uploads are deferred.
-  const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024   // keep in sync with worker's MAX_ATTACHMENT_BYTES
-  const MAX_ATTACHMENTS      = 5                  // keep in sync with worker's MAX_ATTACHMENTS
-
-  function handleAddAttachments(files: FileList | null) {
-    if (!files || !files.length) return
-    setAttachmentError('')
-    const totalExisting = existingAttachments.length + pendingAttachments.length
-    const accepted: File[] = []
-    for (const file of Array.from(files)) {
-      if (totalExisting + accepted.length >= MAX_ATTACHMENTS) {
-        setAttachmentError(`Maximum ${MAX_ATTACHMENTS} attachments per proposal`)
-        break
-      }
-      if (file.size > MAX_ATTACHMENT_BYTES) {
-        setAttachmentError(`"${file.name}" is too large — ${MAX_ATTACHMENT_BYTES / 1024 / 1024}MB limit per file`)
-        continue
-      }
-      accepted.push(file)
-    }
-    if (accepted.length) setPendingAttachments(prev => [...prev, ...accepted])
-  }
-
-  function handleRemovePendingAttachment(index: number) {
-    setPendingAttachments(prev => prev.filter((_, i) => i !== index))
-  }
-
-  async function handleRemoveExistingAttachment(attachmentId: string) {
-    if (!editId) return
-    try {
-      await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${editId}/attachments/${attachmentId}`, {
-        method: 'DELETE',
-        credentials: 'include',
-      })
-    } finally {
-      // Drop it from the list regardless — a 404 (already gone) shouldn't
-      // leave a stale row stuck in the UI.
-      setExistingAttachments(prev => prev.filter(a => a.id !== attachmentId))
-    }
-  }
-
-  // Uploads every not-yet-uploaded file once a proposal id exists (called
-  // from handleSaveDraft/handleSubmit right after createDraftProposal()).
-  // Best-effort per file — one failed upload surfaces an error but doesn't
-  // block the save/send that already succeeded.
-  async function uploadPendingAttachments(proposalId: string) {
-    for (const file of pendingAttachments) {
-      const formData = new FormData()
-      formData.append('file', file, file.name)
-      const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/${proposalId}/attachments`, {
-        method: 'POST',
-        credentials: 'include',
-        body: formData,
-      })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || `Failed to upload attachment "${file.name}"`)
-      }
-    }
-    setPendingAttachments([])
-  }
+  // NUVCL-118: attachment upload lived under the now-removed Sender step.
+  // The worker's /proposals/:id/attachments endpoints and proposal_attachments
+  // table are untouched — just no wizard UI feeds them anymore.
 
   async function handleSaveDraft() {
     setSavingDraft(true)
     try {
       const id = await createDraftProposal()
-      await uploadPendingAttachments(id)
       router.push(`/proposals/${id}`)
     } catch (err: any) {
       setErrors({ submit: err.message })
@@ -553,7 +532,6 @@ export default function NewProposalPage() {
     setSaving(true)
     try {
       const id = await createDraftProposal()
-      await uploadPendingAttachments(id)
       router.push(`/proposals/${id}`)
     } catch (err: any) {
       setErrors({ submit: err.message })
@@ -607,7 +585,8 @@ export default function NewProposalPage() {
           {step === 1 && (
             <Step1HotelDetails draft={draft} setDraft={setDraft} errors={errors} editId={editId}
               applyRegionSettings={applyRegionSettings}
-              entities={entities} entitiesLoading={entitiesLoading} />
+              entities={entities} entitiesLoading={entitiesLoading}
+              staff={staff} staffLoading={staffLoading} staffError={staffError} />
           )}
           {step === 2 && (
             <Step2Services draft={draft} setDraft={setDraft} errors={errors}
@@ -620,28 +599,14 @@ export default function NewProposalPage() {
             <Step4Pricing draft={draft} setDraft={setDraft} errors={errors} serviceCategories={serviceCategories} />
           )}
           {step === 5 && (
-            <Step5Sender
-              draft={draft} setDraft={setDraft} errors={errors}
-              staff={staff} staffLoading={staffLoading} staffError={staffError}
-              pendingAttachments={pendingAttachments} existingAttachments={existingAttachments}
-              attachmentError={attachmentError}
-              onAddAttachments={handleAddAttachments}
-              onRemovePendingAttachment={handleRemovePendingAttachment}
-              onRemoveExistingAttachment={handleRemoveExistingAttachment}
-            />
+            <Step5Cover draft={draft} setDraft={setDraft} errors={errors} />
           )}
           {step === 6 && (
-            <Step6Cover draft={draft} setDraft={setDraft} errors={errors} />
-          )}
-          {step === 7 && (
-            <Step7Terms draft={draft} setDraft={setDraft} errors={errors}
+            <Step6Terms draft={draft} setDraft={setDraft} errors={errors}
               entities={entities} entitiesLoading={entitiesLoading} />
           )}
-          {step === 8 && (
-            <Step8Signature draft={draft} setDraft={setDraft} errors={errors} />
-          )}
-          {step === 9 && (
-            <Step9Preview draft={draft} setDraft={setDraft} errors={errors} staff={staff} />
+          {step === 7 && (
+            <Step7Preview draft={draft} setDraft={setDraft} errors={errors} staff={staff} />
           )}
 
           {errors.submit && (
@@ -848,7 +813,10 @@ type CombinedResult =
   | { source: 'registry'; hg: RegistryHotelGroupSummary }
   | { source: 'hubspot';  hs: HubspotSearchResult }
 
-function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSettings, entities = [], entitiesLoading }: StepProps) {
+function Step1HotelDetails({
+  draft, setDraft, errors, editId, applyRegionSettings, entities = [], entitiesLoading,
+  staff = [], staffLoading, staffError,
+}: StepProps) {
   const h = draft.hotel
   function update(key: string, val: string) {
     setDraft(d => ({ ...d, hotel: { ...d.hotel, [key]: val } }))
@@ -1473,6 +1441,39 @@ function Step1HotelDetails({ draft, setDraft, errors, editId, applyRegionSetting
         <FormField label="HubSpot Deal ID" error={errors.hubspotDealId}>
           <input className="nv-input" placeholder="(optional)"
             value={h.hubspotDealId} onChange={e => update('hubspotDealId', e.target.value)} />
+        </FormField>
+
+        {/* NUVCL-118: moved here from the removed Sender step — Account
+            Manager is a real client-relationship field, not part of the
+            send workflow that step otherwise existed for. */}
+        <FormField label="Account Manager" error={errors.accountManagerId}>
+          <select className="nv-input"
+            disabled={staffLoading}
+            value={draft.sender.accountManagerId}
+            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, accountManagerId: e.target.value } }))}>
+            <option value="">
+              {staffLoading ? 'Loading Microsoft 365 users…' : 'Select account manager… (optional)'}
+            </option>
+            {staff.map(s => (
+              <option key={s.id} value={s.id}>
+                {s.name} — {s.role_type}{s.m365_upn ? ` (${s.m365_upn})` : ''}
+              </option>
+            ))}
+          </select>
+          {staffError && <span style={{ color: 'var(--nv-error)', fontSize: 12 }}>{staffError}</span>}
+        </FormField>
+
+        {/* NUVCL-118: also moved here from the removed Sender step — this
+            is the letter's opening paragraph (documentModel.ts's
+            introMessage), not just an email body, so it stays even though
+            the AI "Generate Email Template" button that used to sit next to
+            it (a send-workflow feature) did not. */}
+        <FormField label="Personal message (opening paragraph of the proposal letter)" span={2}>
+          <RichTextEditor
+            value={draft.sender.message}
+            onChange={html => setDraft(d => ({ ...d, sender: { ...d.sender, message: html } }))}
+            placeholder="Edit the default opening paragraph, or clear it and write a custom one — e.g. Hi Sarah, it was great speaking with you today…"
+          />
         </FormField>
       </div>
 
@@ -2431,219 +2432,102 @@ function FootnotesGroup({ footnotes, onChange, showAddButton = true }: {
   )
 }
 
-/* ─── Step 5: Sender ─── */
-function Step5Sender({
-  draft, setDraft, errors, staff = [], staffLoading, staffError,
-  pendingAttachments = [], existingAttachments = [], attachmentError = '',
-  onAddAttachments, onRemovePendingAttachment, onRemoveExistingAttachment,
-}: StepProps) {
-  const [generating, setGenerating] = useState(false)
-  const [genError, setGenError]     = useState('')
+/* ─── Step 5: Cover Image ─── */
+// NUVCL-119: four new branded A4 cover layouts, from Odysseus's "A4 cover
+// page templates" design export. Stored as sentinel strings in the existing
+// cover.coverUrl field (no schema change / migration needed — the worker
+// already round-trips cover_url as an opaque TEXT column) so ProposalDocument
+// can branch on a `branded:` prefix at render time; any other coverUrl value
+// (a real image URL, or empty) falls through to the original photo-cover
+// rendering untouched, so existing proposals are unaffected.
+const BRANDED_COVER_TEMPLATES = [
+  { id: 'branded:circles',   label: 'Teal — brand circles' },
+  { id: 'branded:split',     label: 'Split panel'          },
+]
 
-  function formatBytes(bytes: number): string {
-    if (bytes < 1024) return `${bytes} B`
-    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  }
-
-  async function handleGenerateEmail() {
-    setGenerating(true)
-    setGenError('')
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/proposals/generate-email-template`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'include',
-        body: JSON.stringify({
-          staffId:      draft.sender.staffId,
-          contactName:  draft.hotel.contactName,
-          contactTitle: draft.hotel.contactTitle,
-          hotelName:    draft.hotel.name,
-          serviceCodes: draft.services.map(s => s.code),
-        }),
-      })
-      const data = await res.json()
-      if (!res.ok) throw new Error(data.error || 'Failed to generate email template')
-      // The AI template comes back as plain text (see worker's
-      // generateEmailTemplate) — wrap each paragraph in <p> so it renders
-      // correctly once dropped into the now-HTML RichTextEditor below.
-      const html = String(data.data.message || '')
-        .split(/\n{2,}/)
-        .map((para: string) => para.trim())
-        .filter(Boolean)
-        .map((para: string) => `<p>${para.replace(/\n/g, '<br />')}</p>`)
-        .join('')
-      setDraft(d => ({ ...d, sender: { ...d.sender, message: html } }))
-    } catch (e: any) {
-      setGenError(e.message || 'Failed to generate email template')
-    } finally {
-      setGenerating(false)
-    }
-  }
-
-  return (
-    <div className="step-content">
-      <h2 className="step-title">Sender</h2>
-      <p className="step-desc">Choose who this proposal is sent from and add a personal message.</p>
-
-      <div className="form-grid">
-        <FormField label="Sending on behalf of *" error={errors.staffId || staffError} span={2}>
-          <select className="nv-input"
-            disabled={staffLoading}
-            value={draft.sender.staffId}
-            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, staffId: e.target.value } }))}>
-            <option value="">
-              {staffLoading ? 'Loading Microsoft 365 users…' : 'Select team member…'}
-            </option>
-            {staff.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.name} — {s.role_type}{s.m365_upn ? ` (${s.m365_upn})` : ''}
-              </option>
-            ))}
-          </select>
-        </FormField>
-
-        <FormField label="Account Manager" error={errors.accountManagerId} span={2}>
-          <select className="nv-input"
-            disabled={staffLoading}
-            value={draft.sender.accountManagerId}
-            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, accountManagerId: e.target.value } }))}>
-            <option value="">
-              {staffLoading ? 'Loading Microsoft 365 users…' : 'Select account manager…'}
-            </option>
-            {staff.map(s => (
-              <option key={s.id} value={s.id}>
-                {s.name} — {s.role_type}{s.m365_upn ? ` (${s.m365_upn})` : ''}
-              </option>
-            ))}
-          </select>
-        </FormField>
-
-        <FormField label="Subject" error={errors.subject} span={2}>
-          <input className="nv-input" type="text"
-            placeholder={`Your Nuvho Proposal — ${draft.hotel.name || '[Hotel Name]'}`}
-            value={draft.sender.subject}
-            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, subject: e.target.value } }))} />
-        </FormField>
-
-        <FormField label="CC (comma-separated)" error={errors.cc}>
-          <input className="nv-input" type="text"
-            placeholder="e.g. manager@nuvho.com, partner@example.com"
-            value={draft.sender.cc}
-            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, cc: e.target.value } }))} />
-        </FormField>
-        <FormField label="BCC (comma-separated)" error={errors.bcc}>
-          <input className="nv-input" type="text"
-            placeholder="e.g. records@nuvho.com"
-            value={draft.sender.bcc}
-            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, bcc: e.target.value } }))} />
-        </FormField>
-
-        <FormField label="Personal message (appears in email & proposal intro)" span={2}>
-          <RichTextEditor
-            value={draft.sender.message}
-            onChange={html => setDraft(d => ({ ...d, sender: { ...d.sender, message: html } }))}
-            placeholder="e.g. Hi Sarah, it was great speaking with you today…"
-          />
-          <div style={{ marginTop: 8 }}>
-            <button
-              type="button"
-              className="nv-btn nv-btn--outlined nv-btn--sm"
-              onClick={handleGenerateEmail}
-              disabled={generating || !draft.hotel.contactName}
-              aria-busy={generating}
-              title={!draft.hotel.contactName ? 'Enter a contact name in Hotel Details first' : undefined}
-            >
-              {generating ? 'Generating…' : '✦ Generate Email Template'}
-            </button>
-            {genError && <span style={{ color: 'var(--nv-error)', fontSize: 12, marginLeft: 10 }}>{genError}</span>}
-          </div>
-        </FormField>
-
-        <FormField label="Attachments (optional)" error={attachmentError} span={2}>
-          <label className="attachment-upload">
-            <input type="file" multiple hidden
-              onChange={e => { onAddAttachments?.(e.target.files); e.target.value = '' }} />
-            <span className="nv-btn nv-btn--outlined nv-btn--sm">↑ Add attachment</span>
-          </label>
-
-          {(existingAttachments.length > 0 || pendingAttachments.length > 0) && (
-            <ul className="attachment-list">
-              {existingAttachments.map(att => (
-                <li key={att.id} className="attachment-list__item">
-                  <span className="attachment-list__name">{att.filename}</span>
-                  <span className="attachment-list__size">{formatBytes(att.sizeBytes)}</span>
-                  <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm attachment-list__remove"
-                    onClick={() => onRemoveExistingAttachment?.(att.id)}>Remove</button>
-                </li>
-              ))}
-              {pendingAttachments.map((file, i) => (
-                <li key={`pending-${i}-${file.name}`} className="attachment-list__item">
-                  <span className="attachment-list__name">{file.name}</span>
-                  <span className="attachment-list__size">{formatBytes(file.size)}</span>
-                  <span className="attachment-list__badge">Pending upload</span>
-                  <button type="button" className="nv-btn nv-btn--ghost nv-btn--sm attachment-list__remove"
-                    onClick={() => onRemovePendingAttachment?.(i)}>Remove</button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </FormField>
-      </div>
-
-      <style jsx>{`
-        .attachment-upload { display: inline-block; }
-        .attachment-list {
-          list-style: none; margin: 10px 0 0; padding: 0;
-          display: flex; flex-direction: column; gap: 6px;
-        }
-        .attachment-list__item {
-          display: flex; align-items: center; gap: 10px;
-          padding: 8px 12px; border-radius: 8px;
-          border: 1px solid var(--nv-border-hair);
-          background: var(--nv-platinum);
-          font-size: 12px;
-        }
-        .attachment-list__name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .attachment-list__size { color: var(--nv-text-muted); flex-shrink: 0; }
-        .attachment-list__badge {
-          color: var(--nv-steel-blue); font-size: 11px; flex-shrink: 0;
-          font-style: italic;
-        }
-        .attachment-list__remove { color: var(--nv-error); flex-shrink: 0; }
-      `}</style>
-    </div>
-  )
-}
-
-/* ─── Step 6: Cover Image ─── */
-function Step6Cover({ draft, setDraft, errors }: StepProps) {
+function Step5Cover({ draft, setDraft, errors }: StepProps) {
   const COVER_OPTIONS = [
     { url: '/covers/sunset-pier.jpg',   label: 'Sunset Pier'  },
     { url: '/covers/winter-pier.jpg',   label: 'Winter Pier'  },
     { url: '/covers/resort-pool.jpg',   label: 'Resort Pool'  },
     { url: '/covers/city-skyline.jpg',  label: 'City Skyline' },
   ]
+  const { template: selectedTemplate, photoUrl: selectedPhotoUrl } = parseCoverUrl(draft.cover.coverUrl)
+  // "Teal — brand circles" is a photo-less layout by design (just the logo +
+  // title over the brand-colour arc), so picking a photo alongside it would
+  // never actually show — grey the Photos grid out rather than let staff
+  // pick one and wonder why it's not appearing on the cover. "Split panel"
+  // does render a photo (in its image drop-zone), so photos stay enabled there.
+  const photosDisabled = selectedTemplate === 'circles'
   return (
     <div className="step-content">
       <h2 className="step-title">Cover Image</h2>
       <p className="step-desc">
-        Choose a cover photo for the proposal — or leave as default.
+        Choose a branded cover layout, a cover photo, or leave as default.
         You can also upload a custom image specific to this property.
         Recommended size: 1414×2000px (portrait, A4 ratio) — other ratios will be cropped to fit.
       </p>
 
+      <h3 className="step-subtitle">Branded templates</h3>
       <div className="cover-grid">
-        {COVER_OPTIONS.map(opt => (
-          <button
-            key={opt.url}
-            className={`cover-option ${draft.cover.coverUrl === opt.url ? 'cover-option--selected' : ''}`}
-            onClick={() => setDraft(d => ({ ...d, cover: { ...d.cover, coverUrl: opt.url } }))}
-          >
-            <div className="cover-option__img" style={{ backgroundImage: `url(${opt.url})` }} />
-            <span className="cover-option__label">{opt.label}</span>
-          </button>
-        ))}
+        {BRANDED_COVER_TEMPLATES.map(opt => {
+          const optTemplate = opt.id.split(':')[1]
+          return (
+            <button
+              key={opt.id}
+              className={`cover-option ${selectedTemplate === optTemplate ? 'cover-option--selected' : ''}`}
+              onClick={() => setDraft(d => {
+                // Switching templates keeps an already-picked photo only when
+                // moving between templates that both support one (currently
+                // just "split" itself); "circles" never carries a photo.
+                const { photoUrl } = parseCoverUrl(d.cover.coverUrl)
+                const nextPhoto = optTemplate === 'split' ? photoUrl : ''
+                return { ...d, cover: { ...d.cover, coverUrl: buildCoverUrl(optTemplate, nextPhoto) } }
+              })}
+            >
+              <div className={`cover-swatch cover-swatch--${optTemplate}`}>
+                {optTemplate === 'circles' && <span className="cover-swatch__arc" />}
+                {optTemplate === 'split' && (
+                  <>
+                    <span className="cover-swatch__rail" />
+                    <span className="cover-swatch__panel" />
+                  </>
+                )}
+              </div>
+              <span className="cover-option__label">{opt.label}</span>
+            </button>
+          )
+        })}
+      </div>
+
+      <h3 className="step-subtitle">Photos</h3>
+      {photosDisabled && (
+        <p className="cover-photos-hint">
+          Not used with the &ldquo;Teal — brand circles&rdquo; template — switch to a photo cover or Split panel to pick one.
+        </p>
+      )}
+      {selectedTemplate === 'split' && !photosDisabled && (
+        <p className="cover-photos-hint">Shown in the Split panel&rsquo;s image area.</p>
+      )}
+      <div className={`cover-grid ${photosDisabled ? 'cover-grid--disabled' : ''}`}>
+        {COVER_OPTIONS.map(opt => {
+          const isSelected = selectedTemplate === 'split' ? selectedPhotoUrl === opt.url : draft.cover.coverUrl === opt.url
+          return (
+            <button
+              key={opt.url}
+              className={`cover-option ${isSelected ? 'cover-option--selected' : ''}`}
+              disabled={photosDisabled}
+              onClick={() => setDraft(d => {
+                const { template } = parseCoverUrl(d.cover.coverUrl)
+                const nextCoverUrl = template === 'split' ? buildCoverUrl('split', opt.url) : opt.url
+                return { ...d, cover: { ...d.cover, coverUrl: nextCoverUrl } }
+              })}
+            >
+              <div className="cover-option__img" style={{ backgroundImage: `url(${opt.url})` }} />
+              <span className="cover-option__label">{opt.label}</span>
+            </button>
+          )
+        })}
       </div>
 
       <label className="cover-upload">
@@ -2652,7 +2536,11 @@ function Step6Cover({ draft, setDraft, errors }: StepProps) {
             const file = e.target.files?.[0]
             if (file) {
               const url = URL.createObjectURL(file)
-              setDraft(d => ({ ...d, cover: { ...d.cover, coverUrl: url, uploadFile: file } }))
+              setDraft(d => {
+                const { template } = parseCoverUrl(d.cover.coverUrl)
+                const nextCoverUrl = template === 'split' ? buildCoverUrl('split', url) : url
+                return { ...d, cover: { ...d.cover, coverUrl: nextCoverUrl, uploadFile: file } }
+              })
             }
           }} />
         <span className="nv-btn nv-btn--outlined nv-btn--sm">↑ Upload custom image</span>
@@ -2695,13 +2583,33 @@ function Step6Cover({ draft, setDraft, errors }: StepProps) {
         }
 
         .cover-upload { display: block; }
+
+        .step-subtitle {
+          font-family: var(--font-comfortaa); font-size: 12px; font-weight: 700;
+          letter-spacing: 0.06em; text-transform: uppercase; color: var(--nv-text-muted);
+          margin: 18px 0 4px;
+        }
+        .cover-photos-hint { font-size: 12px; color: var(--nv-text-muted); margin: 0 0 8px; }
+        .cover-grid--disabled { opacity: 0.4; }
+        .cover-grid--disabled .cover-option { cursor: not-allowed; }
+        .cover-swatch {
+          height: 80px; position: relative; overflow: hidden;
+          background: var(--nv-blue-slate);
+        }
+        .cover-swatch__arc {
+          position: absolute; left: -34px; bottom: -34px; width: 80px; height: 80px;
+          border-radius: 50%; border: 1px solid rgba(255,255,255,0.35);
+        }
+        .cover-swatch--split { background: #fff; display: flex; }
+        .cover-swatch__rail { flex: 0 0 32%; background: #1A3D4A; }
+        .cover-swatch__panel { flex: 1; background: var(--nv-platinum); }
       `}</style>
     </div>
   )
 }
 
 /* ─── Step 7: Terms & Conditions ─── */
-function Step7Terms({ draft, setDraft, errors, entities = [], entitiesLoading }: StepProps) {
+function Step6Terms({ draft, setDraft, errors, entities = [], entitiesLoading }: StepProps) {
   const terms = draft.terms
 
   function updateTerms(next: Partial<typeof terms>) {
@@ -2847,119 +2755,19 @@ function TermsEditor({ clauses, onChange }: { clauses: TermsClause[]; onChange: 
   )
 }
 
-/* ─── Step 8: Signature ─── */
-function Step8Signature({ draft, setDraft, errors }: StepProps) {
-  const terms = draft.terms
+/* Step 7 (Signature) removed entirely — it had already been reduced to a
+   read-only confirmation of Settings-sourced values with nothing left to
+   configure, so there was no reason to keep a whole wizard step for it.
+   draft.terms.signatureRequired/signatureMethod/signatoryName/
+   signatureDataUrl still exist and still feed the letter's sign-off (see
+   ProposalDocument.tsx / exportDocx.ts) — signatureRequired just has no UI
+   toggle anymore and stays at its serviceCatalog.ts initTerms default of
+   `true`, so the sign-off always shows, sourced from Settings → User
+   Settings (My Signature). A user who hasn't set one up there will simply
+   see "Signature not yet captured" on the letter. */
 
-  function updateTerms(next: Partial<typeof terms>) {
-    setDraft(d => ({ ...d, terms: { ...d.terms, ...next } }))
-  }
-
-  return (
-    <div className="step-content">
-      <h2 className="step-title">Signature</h2>
-      <p className="step-desc">
-        Configure how the client will provide their signature.
-      </p>
-
-      <div className="signature-box">
-        <label className="signature-box__toggle">
-          <button type="button" className={`nv-checkbox ${terms.signatureRequired ? 'nv-checkbox--checked' : ''}`}
-            onClick={() => updateTerms({ signatureRequired: !terms.signatureRequired })}>
-            {terms.signatureRequired && '✓'}
-          </button>
-          <span>Require e-signature block on the client-facing proposal</span>
-        </label>
-
-        {terms.signatureRequired && (
-          <>
-            <div className="signature-method" role="tablist" aria-label="Signature method">
-              <button type="button" role="tab" aria-selected={terms.signatureMethod === 'type'}
-                className={`signature-method__btn ${terms.signatureMethod === 'type' ? 'signature-method__btn--active' : ''}`}
-                onClick={() => updateTerms({ signatureMethod: 'type' })}>
-                Type name
-              </button>
-              <button type="button" role="tab" aria-selected={terms.signatureMethod === 'draw'}
-                className={`signature-method__btn ${terms.signatureMethod === 'draw' ? 'signature-method__btn--active' : ''}`}
-                onClick={() => updateTerms({ signatureMethod: 'draw' })}>
-                Draw signature
-              </button>
-            </div>
-
-            <div className="form-grid" style={{ marginTop: 14 }}>
-              <FormField label="Signatory Name"
-                error={terms.signatureMethod === 'type' ? errors.signatoryName : undefined}>
-                <input className="nv-input" placeholder="e.g. Jane Smith"
-                  value={terms.signatoryName} onChange={e => updateTerms({ signatoryName: e.target.value })} />
-              </FormField>
-              <FormField label="Signatory Title">
-                <input className="nv-input" placeholder="e.g. General Manager"
-                  value={terms.signatoryTitle} onChange={e => updateTerms({ signatoryTitle: e.target.value })} />
-              </FormField>
-            </div>
-
-            {terms.signatureMethod === 'type' ? (
-              <div className="signature-preview">
-                <span className="signature-preview__label">Signature preview</span>
-                <div className="signature-preview__script">
-                  {terms.signatoryName || 'Your name here'}
-                </div>
-              </div>
-            ) : (
-              <div className="signature-preview">
-                <span className="signature-preview__label">Draw signature</span>
-                {errors.signatureDataUrl && (
-                  <div style={{ color: 'var(--nv-error)', fontSize: 12, marginBottom: 6 }}>{errors.signatureDataUrl}</div>
-                )}
-                <SignaturePad
-                  value={terms.signatureDataUrl}
-                  onChange={dataUrl => updateTerms({ signatureDataUrl: dataUrl })}
-                />
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
-      <style jsx>{`
-        .signature-box { padding: 16px; background: var(--nv-platinum); border-radius: 10px; margin-top: 20px; }
-        .signature-box__toggle { display: flex; align-items: center; gap: 10px; cursor: pointer; font-size: 12px; font-weight: 600; }
-        .nv-checkbox {
-          width: 18px; height: 18px; border-radius: 4px; border: 2px solid var(--nv-border);
-          background: transparent; cursor: pointer; flex-shrink: 0;
-          display: flex; align-items: center; justify-content: center; font-size: 11px; color: white;
-        }
-        .nv-checkbox--checked { border-color: var(--nv-blue-slate); background: var(--nv-blue-slate); }
-
-        .signature-method { display: flex; gap: 8px; margin-top: 14px; }
-        .signature-method__btn {
-          padding: 7px 16px; border-radius: 20px; border: 2px solid var(--nv-border);
-          background: white; color: var(--nv-text-body); font-size: 12px; font-weight: 600;
-          font-family: var(--font-comfortaa); cursor: pointer;
-        }
-        .signature-method__btn--active { border-color: var(--nv-blue-slate); background: var(--nv-blue-slate); color: white; }
-
-        .signature-preview { margin-top: 14px; }
-        .signature-preview__label {
-          display: block; font-size: 11px; font-weight: 700; color: var(--nv-text-muted);
-          text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 6px;
-        }
-        .signature-preview__script {
-          font-family: var(--font-signature);
-          font-size: 40px;
-          line-height: 1.3;
-          color: var(--nv-text-heading);
-          padding: 6px 14px 10px;
-          border-bottom: 1.5px solid var(--nv-border);
-          max-width: 420px;
-        }
-      `}</style>
-    </div>
-  )
-}
-
-/* ─── Step 9: Preview & Save ─── */
-function Step9Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
+/* ─── Step 7: Preview & Save ─── */
+function Step7Preview({ draft, setDraft, errors, staff = [] }: StepProps) {
   const total = draft.services.reduce((acc, s) => acc + s.monthlyFee * s.term + s.setupFee, 0)
   const model = buildDocModelFromDraft(draft, staff)
 
@@ -3080,19 +2888,10 @@ interface StepProps {
   // rather than the (possibly stale, code-only) fallback.
   serviceCategories?: ServiceCategory[]
   serviceCategoriesLoading?: boolean
-  // Only used by Step7Terms's Governing Entity picker — see the entities/
+  // Only used by Step6Terms's Governing Entity picker — see the entities/
   // entitiesLoading state comment in NewProposalPage.
   entities?: RegistryEntity[]
   entitiesLoading?: boolean
-  // Only used by Step5Sender — attachment picker state/handlers. See the
-  // pendingAttachments/existingAttachments state comment in
-  // NewProposalPage for why uploads are deferred until a proposal id exists.
-  pendingAttachments?: File[]
-  existingAttachments?: ProposalAttachment[]
-  attachmentError?: string
-  onAddAttachments?: (files: FileList | null) => void
-  onRemovePendingAttachment?: (index: number) => void
-  onRemoveExistingAttachment?: (attachmentId: string) => void
 }
 
 function FormField({ label, error, children, span }: {
@@ -3173,17 +2972,10 @@ function validateStep(draft: ProposalDraft): Record<string, string> {
   if (draft.step === 2 && draft.services.length === 0) {
     errs.services = 'Please select at least one service'
   }
-  if (draft.step === 5 && !draft.sender.staffId) {
-    errs.staffId = 'Please select a sender'
-  }
-  if (draft.step === 8 && draft.terms.signatureRequired) {
-    if (draft.terms.signatureMethod === 'draw') {
-      if (!draft.terms.signatureDataUrl) {
-        errs.signatureDataUrl = 'Please draw a signature, or switch to "Type name"'
-      }
-    } else if (!draft.terms.signatoryName.trim()) {
-      errs.signatoryName = 'Signatory name is required when a signature block is requested'
-    }
-  }
+  // No signature validation block anymore: the Signature step itself was
+  // removed, and signatoryName/signatureDataUrl are sourced from Settings
+  // (My Signature) rather than typed in anywhere in this wizard, so there's
+  // no field left to fix a validation error against. A missing signature
+  // just renders as "Signature not yet captured" on the letter.
   return errs
 }

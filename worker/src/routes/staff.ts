@@ -61,3 +61,76 @@ export async function syncM365Staff(request: Request, env: Env, session: Session
 
   return ok({ total: users.length, created, updated })
 }
+
+/* ─── NUVCL-117: per-user signature ──────────────────────────
+   Scoped to session.staffId only — a user can read/write their OWN
+   signature, never another staff member's, since staffId never comes from
+   the request body/URL here. Used by Settings → User Settings to save it,
+   and by the proposal wizard to pre-fill (still overridably) Step 7's
+   Signature step for new proposals. */
+export async function getMySignature(env: Env, session: Session): Promise<Response> {
+  if (!session.staffId) return err('Your account is not linked to a staff record', 409)
+  const row = await env.DB.prepare(
+    'SELECT name, signature_method, signature_data_url FROM staff WHERE id = ?'
+  ).bind(session.staffId).first<{ name: string; signature_method: string | null; signature_data_url: string | null }>()
+  if (!row) return err('Staff record not found', 404)
+  return ok({
+    signatoryName:     row.name,
+    signatureMethod:   row.signature_method,
+    signatureDataUrl:  row.signature_data_url,
+  })
+}
+
+export async function updateMySignature(request: Request, env: Env, session: Session): Promise<Response> {
+  if (!session.staffId) return err('Your account is not linked to a staff record', 409)
+  const body = await request.json() as { signatureMethod?: 'type' | 'draw' | null; signatureDataUrl?: string | null }
+
+  if (body.signatureMethod && !['type', 'draw'].includes(body.signatureMethod)) {
+    return err('signatureMethod must be "type" or "draw"', 400)
+  }
+  if (body.signatureMethod === 'draw' && !body.signatureDataUrl) {
+    return err('signatureDataUrl is required when signatureMethod is "draw"', 400)
+  }
+
+  await env.DB.prepare(
+    `UPDATE staff SET signature_method = ?, signature_data_url = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(
+    body.signatureMethod || null,
+    body.signatureMethod === 'draw' ? (body.signatureDataUrl || null) : null,
+    session.staffId,
+  ).run()
+
+  return ok({ saved: true })
+}
+
+/* ─── Self-service role / position ───────────────────────────
+   Scoped to session.staffId only, same pattern as the signature endpoints
+   above. `role` (the staff table's free-text job-title column) was
+   previously only ever set by M365 sync at first creation, or by admin/
+   seed data — syncM365Staff's UPDATE branch above deliberately does not
+   touch `role` on existing records, so this is the first path that lets a
+   user edit their own, and a later M365 sync will not silently overwrite
+   whatever they set here. Shown in Settings → User Settings. */
+export async function getMyProfile(env: Env, session: Session): Promise<Response> {
+  if (!session.staffId) return err('Your account is not linked to a staff record', 409)
+  const row = await env.DB.prepare(
+    'SELECT name, email, role FROM staff WHERE id = ?'
+  ).bind(session.staffId).first<{ name: string; email: string; role: string }>()
+  if (!row) return err('Staff record not found', 404)
+  return ok({ name: row.name, email: row.email, role: row.role })
+}
+
+export async function updateMyProfile(request: Request, env: Env, session: Session): Promise<Response> {
+  if (!session.staffId) return err('Your account is not linked to a staff record', 409)
+  const body = await request.json() as { role?: string }
+  const role = typeof body.role === 'string' ? body.role.trim() : ''
+
+  if (!role) return err('role is required', 400)
+  if (role.length > 100) return err('role must be 100 characters or fewer', 400)
+
+  await env.DB.prepare(
+    `UPDATE staff SET role = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(role, session.staffId).run()
+
+  return ok({ saved: true, role })
+}

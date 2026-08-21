@@ -76,13 +76,13 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   }
   children.push(new Paragraph({ text: model.contactName || '[Client Name]' }))
   children.push(new Paragraph({ text: model.hotelName || '[Hotel Name]' }))
-  children.push(new Paragraph({ text: model.propertyAddress || '[Property Address]', spacing: { after: 200 } }))
+  children.push(new Paragraph({ text: model.propertyAddress || '[Property Address]', spacing: { after: 500 } }))
   children.push(new Paragraph({ children: [new TextRun({ text: `RE: ${model.title}`, bold: true })], spacing: { after: 200 } }))
   children.push(body(`Dear ${model.contactName || '[Client Name]'},`))
-  // introMessage is authored via TinyMCE (wizard Step 5) — always HTML now.
+  // introMessage is authored via the rich-text editor on wizard Step 1 (since NUVCL-118) — always HTML.
   htmlToParagraphs(model.introMessage).forEach(line => children.push(body(line)))
 
-  ;['Background', 'Scope of Works', 'Nuvho Pty Ltd', 'Fee Structure', 'Appendix 1 – Terms & Conditions']
+  ;['Background', 'Scope of Works', 'Nuvho Pty Ltd', 'Fee Structure', 'Terms & Conditions']
     .forEach(item => children.push(new Paragraph({ children: [new TextRun({ text: item, bold: true })], spacing: { after: 40 } })))
 
   children.push(body('If you require further information or wish to discuss this proposal, please don’t hesitate to contact me.'))
@@ -103,7 +103,17 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   }
   children.push(new Paragraph({ children: [new TextRun({ text: model.senderName || '[Sender Name]', bold: true })] }))
   if (model.senderRoleLabel) children.push(new Paragraph({ text: model.senderRoleLabel }))
-  if (model.senderEmail) children.push(new Paragraph({ text: `e: ${model.senderEmail}`, spacing: { after: 300 } }))
+  if (model.senderEmail) children.push(new Paragraph({ text: `e: ${model.senderEmail}` }))
+  // Legal entity / registration line (e.g. "Nuvho Pty Ltd - ABN 62 622 629
+  // 672") under the letter's sign-off, matching ProposalDocument.tsx's
+  // .doc-letter-footer — in addition to, not instead of, the fuller legal
+  // footer block further down (near the Appendix).
+  if (model.footerText) {
+    model.footerText.split('\n').forEach(line => {
+      children.push(new Paragraph({ children: [new TextRun({ text: line, size: 16, color: '757575' })] }))
+    })
+  }
+  children.push(new Paragraph({ text: '', spacing: { after: 300 } }))
 
   // Background
   children.push(heading('Background'))
@@ -191,7 +201,7 @@ export async function buildDocxFile(model: ProposalDocModel): Promise<Blob> {
   }
 
   // Appendix — Terms & Conditions
-  children.push(heading('Appendix 1 – Terms & Conditions'))
+  children.push(heading('Terms & Conditions'))
   if (model.clauses.length === 0) {
     children.push(italic('No clauses selected.'))
   }

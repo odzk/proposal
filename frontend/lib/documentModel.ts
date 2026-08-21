@@ -13,6 +13,43 @@ export const ROLE_LABELS: Record<string, string> = {
   delivery: 'Delivery', ops: 'Operations', support: 'Support',
 }
 
+// NUVCL-119 branded cover sentinel — stored as `branded:<id>` (no photo) or
+// `branded:<id>::<photoUrl>` (for templates like "split" that also render an
+// embedded cover photo) in the existing coverUrl/cover_url string field, so
+// no schema migration is needed. Centralised here so the wizard's Step5Cover
+// editor (app/(app)/proposals/new/page.tsx) and <ProposalDocument>'s renderer
+// parse/build the exact same format.
+export function parseCoverUrl(coverUrl: string): { template: string | null; photoUrl: string } {
+  if (!coverUrl || !coverUrl.startsWith('branded:')) return { template: null, photoUrl: coverUrl || '' }
+  const rest = coverUrl.slice('branded:'.length)
+  const sep = rest.indexOf('::')
+  return sep === -1 ? { template: rest, photoUrl: '' } : { template: rest.slice(0, sep), photoUrl: rest.slice(sep + 2) }
+}
+export function buildCoverUrl(template: string, photoUrl?: string): string {
+  return photoUrl ? `branded:${template}::${photoUrl}` : `branded:${template}`
+}
+
+// Shared with the wizard's Step 1 "Personal message" editor (see
+// app/(app)/proposals/new/page.tsx), which auto-fills a new proposal's
+// message field with this same text (using literal `[service]`/`[Hotel Name]`
+// placeholders, since neither is known yet at Step 1) so staff see and can
+// edit a real starting paragraph instead of an empty field backed only by
+// this invisible build-time fallback.
+export function buildDefaultIntroMessage(serviceLabel: string, hotelName: string): string {
+  return `<p>I am pleased to present this proposal to undertake ${serviceLabel} for ${hotelName}. This document represents our commercial proposal and sets out the following:</p>`
+}
+
+// Resolves a Step 1 message — which may be empty, the untouched default
+// above (with its literal `[service]`/`[Hotel Name]` tokens, since neither
+// is known that early in the wizard), or a staff-edited version that still
+// carries those same tokens — into final HTML with the proposal's real
+// service and hotel name substituted in at document/PDF generation time, so
+// nobody has to manually replace the brackets before sending.
+export function resolveIntroMessage(rawMessage: string, serviceLabel: string, hotelName: string): string {
+  const html = rawMessage || buildDefaultIntroMessage(serviceLabel, hotelName)
+  return html.replace(/\[service\]/gi, serviceLabel).replace(/\[hotel name\]/gi, hotelName)
+}
+
 export interface DocServiceGroup {
   code:       string
   label:      string
@@ -73,7 +110,7 @@ function formatToday(): string {
   return new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })
 }
 
-interface StaffLike { id: string; name: string; email: string; role_type: string }
+interface StaffLike { id: string; name: string; email: string; role: string; role_type: string }
 
 /** Build the document model from the in-progress wizard draft (Preview & Send step). */
 export function buildDocModelFromDraft(draft: ProposalDraft, staff: StaffLike[]): ProposalDocModel {
@@ -99,12 +136,16 @@ export function buildDocModelFromDraft(draft: ProposalDraft, staff: StaffLike[])
     currencySymbol:    currencySymbol(draft.regionSettings.currency),
     dateIssued:        formatToday(),
     coverUrl:          draft.cover.coverUrl,
-    // sender.message is now authored via TinyMCE (Step 5) — always HTML.
+    // sender.message is authored via the rich-text editor on Step 1 (Hotel
+    // Details) since NUVCL-118 — always HTML.
     // The fallback default is wrapped in <p> so introMessage is always valid
     // HTML either way (see ProposalDocument.tsx / exportDocx.ts renderers).
-    introMessage:      draft.sender.message || `<p>I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${draft.hotel.name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.</p>`,
+    introMessage:      resolveIntroMessage(draft.sender.message, title.toLowerCase(), draft.hotel.name || 'your property'),
     senderName:        sender?.name || '',
-    senderRoleLabel:   sender ? (ROLE_LABELS[sender.role_type] || sender.role_type) : '',
+    // Their actual job title (staff.role, self-editable in Settings → User
+    // Settings), not the generic ROLE_LABELS[role_type] bucket (e.g. plain
+    // "Operations") — matches the wording used everywhere else staff are shown.
+    senderRoleLabel:   sender?.role || '',
     senderEmail:       sender?.email || '',
     services,
     grandTotalMonthly: services.reduce((sum, s) => sum + deriveFeeSummary(s.feeRows).monthlyFee, 0),
@@ -149,9 +190,11 @@ export function buildDocModelFromProposal(p: any): ProposalDocModel {
     currencySymbol:    currencySymbol(p.currency || 'AUD'),
     dateIssued:        p.created_at ? new Date(p.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : formatToday(),
     coverUrl:          p.cover_url || '',
-    introMessage:      p.sender_message || `<p>I am pleased to present this proposal to undertake ${title.toLowerCase()} for ${p.hotel_name || 'your property'}. This document represents our commercial proposal, incorporating our recommended scope of works, fee structure and terms of engagement.</p>`,
+    introMessage:      resolveIntroMessage(p.sender_message || '', title.toLowerCase(), p.hotel_name || 'your property'),
     senderName:        sender?.name || '',
-    senderRoleLabel:   sender ? (ROLE_LABELS[sender.role_type] || sender.role_type) : '',
+    // See the matching comment in buildDocModelFromDraft above — same
+    // switch from the generic role_type label to the sender's actual title.
+    senderRoleLabel:   sender?.role || '',
     senderEmail:       sender?.email || '',
     services,
     grandTotalMonthly: services.reduce((sum, s) => sum + deriveFeeSummary(s.feeRows).monthlyFee, 0),
