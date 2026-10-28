@@ -116,6 +116,11 @@ export interface FeeRow {
   // NUVCL-151: the Note column was removed from the wizard, preview and
   // PDF. Kept optional so older saved rows still type-check; never shown.
   note?:     string
+  // 2026-10-29: an optional extra / alternative the client may add — shown
+  // with an "Optional" tag in the document and left out of every total
+  // (computeFeeTotals), so alternatives no longer read as double charges.
+  // Persisted in proposal_fee_rows.is_optional (migration 0022).
+  optional?: boolean
 }
 
 // One editable, reorderable footnote / small-print line under a service's pricing table

@@ -117,6 +117,12 @@ export function ProposalDocument({ model, beforeAppendix, afterDocument, pageBre
     'data-manual-page-break': model.pageBreaks?.[key] ? 'true' : undefined,
   })
   const multiSvc = model.services.length > 1
+  // 2026-10-29: UK documents carry a printed "Signed for and on behalf of"
+  // block for a countersigned PDF. Hidden once the client signed online
+  // (Client Acceptance takes its place) and on the public page while its
+  // online Accept & Sign form is showing (afterDocument), so a reader never
+  // sees two places to sign.
+  const showPrintedSignBlock = model.printedSignBlock && !model.clientSignedAt && !afterDocument
   // A step that was skipped (left with no usable content) drops both its
   // Table of Contents entry and its own page below — an empty "Scope of
   // Works" page with just a placeholder sentence isn't useful in a
@@ -364,9 +370,10 @@ export function ProposalDocument({ model, beforeAppendix, afterDocument, pageBre
           // Client Acceptance (once signed) and the public Accept & Sign form
           // (while unsigned) both come after the last page — i.e. after
           // Terms & Conditions — on screen and in the PDF alike.
-          appendAtEnd={(afterDocument || model.clientSignedAt) ? (
+          appendAtEnd={(afterDocument || model.clientSignedAt || showPrintedSignBlock) ? (
             <div className="doc-flow a4-running-header">
               <ClientAcceptance model={model} />
+              {showPrintedSignBlock && <PrintedSignBlock model={model} />}
               {afterDocument}
             </div>
           ) : undefined}
@@ -593,7 +600,10 @@ export function ProposalDocument({ model, beforeAppendix, afterDocument, pageBre
                       {s.feeRows.map(row => (
                         <tr key={row.id}>
                           <td {...field("fee", s.code, row.id, "component")}>{row.component || '—'}</td>
-                          <td>{feeTypeLabel(row.feeType) || '—'}</td>
+                          {/* Optional tag lives in Fee Type — the only non-editable
+                              cell — so the A4 editor's fee sync never reads it
+                              back into Component. Inline styles survive baking. */}
+                          <td>{feeTypeLabel(row.feeType) || '—'}{row.optional && <>{' '}<span className="doc-fee-optional" style={OPTIONAL_TAG_STYLE}>Optional</span></>}</td>
                           <td {...field("fee", s.code, row.id, "setupFee")} data-edit-number="true">{row.setupFee === '' || row.setupFee === undefined ? '—' : `${model.currencySymbol}${Number(row.setupFee).toLocaleString()}`}</td>
                           <td {...field("fee", s.code, row.id, "fee")} data-edit-number="true">{row.fee === '' ? '—' : `${model.currencySymbol}${Number(row.fee).toLocaleString()}`}</td>
                           <td {...field("fee", s.code, row.id, "term")} data-edit-number="true">{row.term === '' ? '—' : `${row.term} month${Number(row.term) === 1 ? '' : 's'}`}</td>
@@ -603,6 +613,11 @@ export function ProposalDocument({ model, beforeAppendix, afterDocument, pageBre
                   ))}
                 </tbody>
               </table>
+              {model.services.some(s => s.feeRows.some(r => r.optional)) && (
+                <p {...block("block:fees-optional-note", "Optional items note")} className="doc-fee-optional-note" style={{ fontSize: '11px', fontStyle: 'italic', marginTop: '6px' }}>
+                  Items marked Optional are additional or alternative options. They are not included in the fees above unless you choose to add them.
+                </p>
+              )}
               {model.footnotes.length > 0 && (
                 <div className="doc-footnotes">
                   {model.footnotes.map(f => <div key={f.id} {...block(`block:footnote:${f.id}`, "Pricing footnote")} {...field("footnote", f.id)} className="doc-bullet">{f.text}</div>)}
@@ -634,6 +649,10 @@ export function ProposalDocument({ model, beforeAppendix, afterDocument, pageBre
             </div>
           ),
         })
+      }
+
+      if (showPrintedSignBlock && !ignorePageLayout) {
+        items.push({ key: 'printedSignBlock', breakBefore: false, node: <PrintedSignBlock model={model} /> })
       }
 
       if (afterDocument) {
@@ -998,6 +1017,15 @@ export function ProposalDocument({ model, beforeAppendix, afterDocument, pageBre
           margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--nv-border-hair);
         }
         :global(.doc-flow > .doc-client-acceptance:first-child) { margin-top: 0; padding-top: 0; border-top: 0; }
+        :global(.doc-print-sign) { margin-top: 18px; padding-top: 14px; border-top: 1px solid var(--nv-border-hair); break-inside: avoid; page-break-inside: avoid; }
+        :global(.doc-flow > .doc-print-sign:first-child) { margin-top: 0; padding-top: 0; border-top: 0; }
+        :global(.doc-print-sign__intro) { font-size: 11.5px; margin: 4px 0 14px; }
+        :global(.doc-print-sign__grid) { display: grid; grid-template-columns: 1fr 1fr; gap: 28px; }
+        :global(.doc-print-sign__party-title) { font-size: 11.5px; font-weight: 700; margin-bottom: 6px; color: var(--nv-text-heading); }
+        :global(.doc-print-sign__line) { display: flex; align-items: flex-end; gap: 8px; min-height: 30px; font-size: 11.5px; }
+        :global(.doc-print-sign__party > .doc-print-sign__line:nth-child(2)) { min-height: 54px; }
+        :global(.doc-print-sign__label) { width: 64px; flex-shrink: 0; color: var(--nv-text-muted); padding-bottom: 3px; }
+        :global(.doc-print-sign__value) { flex: 1; border-bottom: 1px solid #8a9aa3; padding: 0 2px 3px; min-height: 18px; }
         :global(.doc-client-acceptance__meta) { font-size: 11.5px; color: var(--nv-text-muted); line-height: 1.5; }
         :global(.doc-client-acceptance__services) { margin-top: 8px; font-size: 11.5px; color: var(--nv-text-body); line-height: 1.5; }
         :global(.doc-client-acceptance__services-title) { font-weight: 600; margin-bottom: 4px; }
@@ -1041,6 +1069,49 @@ function ClientAcceptance({ model }: { model: ProposalDocModel }) {
       {model.clientSignatoryTitle && <>, {model.clientSignatoryTitle}</>}<br />
       Signed {model.clientSignedAt}
       <AcceptedServicesNote model={model} />
+    </div>
+  </div>
+}
+
+const OPTIONAL_TAG_STYLE: React.CSSProperties = {
+  fontSize: '9px', fontWeight: 700, color: '#28687F', backgroundColor: '#E3EEF3',
+  padding: '1px 5px', borderRadius: '3px', textTransform: 'uppercase', letterSpacing: '0.04em',
+}
+
+/** 2026-10-29: printed acceptance block for UK proposals — client and Nuvho
+ *  sign the PDF ("Signed for and on behalf of"). Rendered after the last
+ *  page, never baked into the editable A4 pages, so it can't go stale or be
+ *  duplicated once the client signs online. Exported so the wizard's A4
+ *  editor can preview it as a read-only page. */
+export function PrintedSignBlock({ model }: { model: ProposalDocModel }) {
+  const client = model.hotelGroupName || model.hotelName || '[Client]'
+  const nuvho  = model.companyName || 'Nuvho'
+  const line = (label: string, value?: string) => (
+    <div className="doc-print-sign__line">
+      <span className="doc-print-sign__label">{label}</span>
+      <span className="doc-print-sign__value">{value || ''}</span>
+    </div>
+  )
+  return <div className="doc-print-sign">
+    <h4 className="doc-subheading">Acceptance</h4>
+    <p className="doc-print-sign__intro">
+      By signing below, both parties agree to the services, fees and Terms &amp; Conditions set out in this document.
+    </p>
+    <div className="doc-print-sign__grid">
+      <div className="doc-print-sign__party">
+        <div className="doc-print-sign__party-title">Signed for and on behalf of {client}</div>
+        {line('Signature')}
+        {line('Name')}
+        {line('Title')}
+        {line('Date')}
+      </div>
+      <div className="doc-print-sign__party">
+        <div className="doc-print-sign__party-title">Signed for and on behalf of {nuvho}</div>
+        {line('Signature')}
+        {line('Name', model.senderName)}
+        {line('Title', model.senderRoleLabel)}
+        {line('Date')}
+      </div>
     </div>
   </div>
 }

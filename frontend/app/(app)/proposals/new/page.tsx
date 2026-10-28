@@ -10,7 +10,7 @@ import {
   getServiceLabel, getServiceColor, feeTypeLabel, normaliseFeeType, REGION_META, initScopeItems, initFeeRows,
   initFootnotes, initTerms, generateRowId, deriveFeeSummary,
 } from '@/lib/serviceCatalog'
-import { buildDocModelFromDraft, parseCoverUrl, buildCoverUrl, buildDefaultIntroMessage, documentSourceKey, savedPagesStale } from '@/lib/documentModel'
+import { buildDocModelFromDraft, parseCoverUrl, buildCoverUrl, buildDefaultIntroMessage, documentSourceKey, savedPagesStale, isUkEntity } from '@/lib/documentModel'
 import dynamic from 'next/dynamic'
 
 // The page editor uses native browser selection and editable A4 sheets.
@@ -1006,8 +1006,33 @@ function Step1HotelDetails({
   staff = [], staffLoading, staffError,
 }: StepProps) {
   const h = draft.hotel
+  const session = useSession()
   function update(key: string, val: string) {
     setDraft(d => ({ ...d, hotel: { ...d.hotel, [key]: val } }))
+  }
+
+  // 2026-10-29: set who signs the cover letter, and swap the sign-off
+  // signature to theirs. Your own saved signature (Settings → User Settings)
+  // is used when you pick yourself; anyone else's is typed in script from
+  // their name, since a user can only read their own saved signature.
+  // Changing sender.staffId also changes documentSourceKey, so Preview & Save
+  // re-lays the pages out with the new sign-off.
+  function chooseSigner(staffId: string) {
+    const person = staff.find(s => s.id === staffId)
+    const typed = { signatureMethod: 'type' as const, signatoryName: person?.name || '', signatoryTitle: person?.role || '', signatureDataUrl: '' }
+    setDraft(d => ({ ...d, sender: { ...d.sender, staffId }, terms: { ...d.terms, ...typed } }))
+    if (!session?.staffId || staffId !== session.staffId) return
+    fetch(`${process.env.NEXT_PUBLIC_WORKER_URL}/staff/me/signature`, { credentials: 'include' })
+      .then(r => r.json())
+      .then(data => {
+        const sig = data?.data || {}
+        if (sig.signatureMethod !== 'draw' || !sig.signatureDataUrl) return
+        // Only if this person is still the chosen signer.
+        setDraft(d => d.sender.staffId !== staffId ? d : {
+          ...d, terms: { ...d.terms, signatureMethod: 'draw', signatoryName: sig.signatoryName || typed.signatoryName, signatureDataUrl: sig.signatureDataUrl },
+        })
+      })
+      .catch(() => { /* typed signature stays — best effort */ })
   }
 
   const [acctQuery, setAcctQuery]   = useState(h.hgid ? (h.hotelGroupName || h.name) : '')
@@ -2114,7 +2139,13 @@ function Step1HotelDetails({
           <select className="nv-input"
             disabled={staffLoading}
             value={draft.sender.accountManagerId}
-            onChange={e => setDraft(d => ({ ...d, sender: { ...d.sender, accountManagerId: e.target.value } }))}>
+            onChange={e => {
+              const id = e.target.value
+              setDraft(d => ({ ...d, sender: { ...d.sender, accountManagerId: id } }))
+              // 2026-10-29: the letter signer follows the Account Manager by
+              // default (still overridable in "Cover letter signed by" below).
+              if (id) chooseSigner(id)
+            }}>
             <option value="">
               {staffLoading ? 'Loading Microsoft 365 users…' : 'Select account manager… (optional)'}
             </option>
@@ -2125,6 +2156,27 @@ function Step1HotelDetails({
             ))}
           </select>
           {staffError && <span style={{ color: 'var(--nv-error)', fontSize: 12 }}>{staffError}</span>}
+        </FormField>
+
+        {/* 2026-10-29 (Hayley's feedback): the letter's sign-off comes from
+            sender.staffId, which had no UI since NUVCL-118 — so a proposal
+            created by one person kept that person's name on the letter even
+            after someone else took it over as Account Manager. Now visible,
+            follows the Account Manager when that's changed, and can be set
+            to anyone (e.g. the CEO signs while Tess manages the account). */}
+        <FormField label="Cover letter signed by" error={errors.senderStaffId}>
+          <select className="nv-input"
+            disabled={staffLoading}
+            value={draft.sender.staffId}
+            onChange={e => { if (e.target.value) chooseSigner(e.target.value) }}>
+            <option value="">{staffLoading ? 'Loading Microsoft 365 users…' : 'Select who signs the letter…'}</option>
+            {staff.map(s => (
+              <option key={s.id} value={s.id}>{s.name}{s.role ? ` — ${s.role}` : ''}</option>
+            ))}
+          </select>
+          <span style={{ fontSize: 12, color: 'var(--nv-text-muted)' }}>
+            Name, title, email and signature on the cover letter&apos;s sign-off{draft.terms.governingEntityCode && isUkEntity(draft.terms.governingEntityCode) ? ' and the Nuvho side of the signature page' : ''}.
+          </span>
         </FormField>
 
         {/* NUVCL-118: also moved here from the removed Sender step — this
@@ -3005,6 +3057,7 @@ function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
           <span>Setup fee</span>
           <span>Fee</span>
           <span>Terms (months)</span>
+          <span title="Optional extras / alternatives are tagged in the document and left out of all totals">Optional</span>
           <span />
         </div>
         {services.map((s, i) => (
@@ -3055,7 +3108,7 @@ function Step4Pricing({ draft, setDraft, serviceCategories = [] }: StepProps) {
       <style jsx>{`
         .pricing-table { border-radius: 6px; overflow: hidden; border: 1px solid var(--nv-border-hair); }
         .pricing-row--header {
-          display: grid; grid-template-columns: 20px 1.6fr 1fr 0.8fr 0.8fr 0.7fr 32px;
+          display: grid; grid-template-columns: 20px 1.6fr 1fr 0.8fr 0.8fr 0.7fr 64px 32px;
           gap: 6px; padding: 0 10px; min-height: 40px; align-items: center;
           /* Figma table header: #28687F @8% fill + @28% rule, Raleway SemiBold 12 #28687F, sentence case */
           background: rgba(40,104,127,0.08); border-bottom: 1px solid rgba(40,104,127,0.28);
@@ -3080,7 +3133,7 @@ function PricingServiceGroup({ label, color, showLabel, dragHandle, feeRows, onC
   const dragIdx  = useRef<number | null>(null)
   const dragOver = useRef<number | null>(null)
 
-  function update(id: string, field: keyof FeeRow, val: string | number) {
+  function update(id: string, field: keyof FeeRow, val: string | number | boolean) {
     onChange(feeRows.map(r => r.id === id ? { ...r, [field]: val } : r))
   }
   function addRow() {
@@ -3126,6 +3179,12 @@ function PricingServiceGroup({ label, color, showLabel, dragHandle, feeRows, onC
             value={row.fee} onChange={e => update(row.id, 'fee', e.target.value === '' ? '' : +e.target.value)} />
           <input className="nv-input nv-input--sm" type="number" placeholder="—" aria-label="Terms (months)"
             value={row.term} onChange={e => update(row.id, 'term', e.target.value === '' ? '' : +e.target.value)} />
+          {/* 2026-10-29: optional extra / alternative — tagged "Optional" in
+              the document and excluded from every total. */}
+          <label className="pricing-row__optional" title="Optional extra or alternative — not included in totals">
+            <input type="checkbox" checked={!!row.optional} aria-label="Optional item"
+              onChange={e => update(row.id, 'optional', e.target.checked)} />
+          </label>
           <button type="button" className="pricing-row__remove" onClick={() => removeRow(row.id)} aria-label="Remove row">{/* eslint-disable-next-line @next/next/no-img-element */}<img src="/icons/xmark.svg" width={14} height={14} alt="" /></button>
         </div>
       ))}
@@ -3135,7 +3194,7 @@ function PricingServiceGroup({ label, color, showLabel, dragHandle, feeRows, onC
 
       <style jsx>{`
         .pricing-row {
-          display: grid; grid-template-columns: 20px 1.6fr 1fr 0.8fr 0.8fr 0.7fr 32px;
+          display: grid; grid-template-columns: 20px 1.6fr 1fr 0.8fr 0.8fr 0.7fr 64px 32px;
           gap: 6px; padding: 7px 10px; align-items: center; background: white;
           border-bottom: 1px solid var(--nv-border-hair); cursor: grab;
         }
@@ -3143,6 +3202,7 @@ function PricingServiceGroup({ label, color, showLabel, dragHandle, feeRows, onC
         .pricing-row__handle { color: var(--nv-text-muted); }
         .pricing-row__remove { width: 32px; height: 32px; border-radius: 6px; background: none; border: none; cursor: pointer; display: grid; place-content: center; }
         .pricing-row__remove:hover { background: rgba(152,38,73,0.07); }
+        .pricing-row__optional { display: grid; place-content: center; cursor: pointer; }
         .pricing-group-label {
           padding: 6px 12px; color: white; font-size: 11px; font-weight: 600;
           font-family: var(--nv-font-body); display: flex; align-items: center; gap: 8px;
@@ -3800,6 +3860,7 @@ function validateStep(draft: ProposalDraft): Record<string, string> {
     const badBcc = invalidEmails(draft.sender.bcc)
     if (badCc.length)  errs.senderCc  = `Invalid email: ${badCc.join(', ')}`
     if (badBcc.length) errs.senderBcc = `Invalid email: ${badBcc.join(', ')}`
+    if (!draft.sender.staffId)      errs.senderStaffId = 'Choose who signs the cover letter'
   }
   if (draft.step === 2 && draft.services.length === 0) {
     errs.services = 'Please select at least one service'

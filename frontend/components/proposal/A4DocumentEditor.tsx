@@ -1,7 +1,7 @@
 'use client'
 
 import React, { useEffect, useRef, useState } from 'react'
-import { ProposalDocument } from './ProposalDocument'
+import { PrintedSignBlock, ProposalDocument } from './ProposalDocument'
 import { TinyMcePageEditor } from './TinyMcePageEditor'
 import type { ProposalDocModel } from '@/lib/documentModel'
 import { blobImageSrcs, contentChildren, pageHeaderVars, pageId, readA4Document, readFeeEditField, refreshCoverPages, removeImagesBySrc, sanitizePageHtml, type A4Document, type A4Page, type FeeCellEdit } from '@/lib/a4Document'
@@ -583,6 +583,13 @@ export function A4DocumentEditor({ model, onChange, onReady, onFeeEdits }: {
           Page {index + 1}{overflow.includes(page.id) ? <span className="a4-editor__warning"> — content exceeds A4, move some to another page</span> : null}
         </div>
       </div>)}
+      {/* 2026-10-29: UK documents end with a printed signature block. It is
+          added after the last page when viewed / downloaded, never stored in
+          the editable pages, so it's previewed here read-only. */}
+      {pages.length > 0 && model.printedSignBlock && !model.clientSignedAt && <div className="a4-editor__page">
+        <div className="doc-flow a4-running-header a4-editor__readonly"><PrintedSignBlock model={model} /></div>
+        <div className="a4-editor__caption">Signature page — added automatically for UK documents (not editable here)</div>
+      </div>}
     </div>
     <div ref={sourceRef} className="a4-editor__source" aria-hidden="true"><ProposalDocument model={initialModel} ignorePageLayout /></div>
     <style jsx>{`
@@ -590,6 +597,7 @@ export function A4DocumentEditor({ model, onChange, onReady, onFeeEdits }: {
       .a4-editor__page { width: 210mm; margin: 0 auto 24px; }
       .a4-editor__caption { text-align: center; padding: 10px; font-size: 12px; color: #6b7280; }
       .a4-editor__warning { color: var(--nv-error); }
+      .a4-editor__readonly { pointer-events: none; background: white; }
       .a4-editor__source { position: absolute; left: -100000px; top: 0; width: 210mm; pointer-events: none; }
       /* TinyMCE's inline editors only ever render <div id tabIndex> before
          init (see TinyMcePageEditor.tsx's own comment) — this keeps that

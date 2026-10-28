@@ -68,3 +68,36 @@ test('Settings → Default fees mapping pre-fills Pricing; built-in rows are the
   assert.notEqual(rows[0].id, rows[1].id)
   assert.ok(initFeeRows('RM', []).length > 0, 'falls back to the catalog when nothing is mapped')
 })
+
+test('optional rows (2026-10-29): excluded from every total, key unchanged unless flagged', () => {
+  // Hayley's SM example: two alternative tiers must not add up to £6,000/month.
+  const rows = [
+    row('setup', 1000),
+    row('monthly', 2500, { term: 12 }),
+    row('monthly', 3500, { term: 12, optional: true, setupFee: 400 }),
+  ]
+  const t = computeFeeTotals(rows)
+  assert.equal(t.monthly, 2500)
+  assert.equal(t.setup, 1000)
+  assert.equal(t.contract, 2500 * 12 + 1000)
+  assert.deepEqual(deriveFeeSummary(rows), { monthlyFee: 2500, setupFee: 1000, term: 12 })
+
+  const draft = {
+    hotel: { name: 'H' }, regionSettings: {}, sender: { staffId: 's1', message: '' },
+    services: [{ code: 'SM', scopeItems: [], feeRows: [{ id: 'f', component: 'A', feeType: 'monthly', fee: 1, term: '', optional: false }], footnotes: [] }],
+    terms: { clauses: [], validityDays: 30, pageBreaks: {} },
+  }
+  const legacy = JSON.parse(JSON.stringify(draft)); delete legacy.services[0].feeRows[0].optional
+  assert.equal(documentSourceKey(draft), documentSourceKey(legacy), 'existing saved layouts are not forced to re-layout')
+  const flagged = JSON.parse(JSON.stringify(draft)); flagged.services[0].feeRows[0].optional = true
+  assert.notEqual(documentSourceKey(flagged), documentSourceKey(draft))
+  const signer = JSON.parse(JSON.stringify(draft)); signer.sender.staffId = 's2'
+  assert.notEqual(documentSourceKey(signer), documentSourceKey(draft), 'changing the letter signer re-lays the pages out')
+})
+
+test('UK governing entities get the printed signature block', () => {
+  const { isUkEntity } = require('../lib/documentModel.ts')
+  assert.equal(isUkEntity('NVH-UK-OPS'), true)
+  assert.equal(isUkEntity('nvh-uk-ops'), true)
+  for (const c of ['NVH-AU-OPS', 'NVH-IE-OPS', 'NVH-AU-HOLD', '', null, undefined, 'NVH-UKX-OPS']) assert.equal(isUkEntity(c), false, String(c))
+})

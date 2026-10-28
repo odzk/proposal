@@ -129,6 +129,7 @@ export interface FeeRowRow {
   term:                  number | null
   note:                  string | null
   sort_order:            number
+  is_optional?:          number   // migration 0022 (0/1)
 }
 
 export interface PricingFootnoteRow {

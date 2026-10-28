@@ -233,10 +233,12 @@ export default function ProposalDetailPage() {
 
   const publicUrl = `${process.env.NEXT_PUBLIC_APP_URL}/p/${proposal.signing_token}`
   const canSend   = proposal.status === 'draft'
+  const docModel  = buildDocModelFromProposal(proposal)
   // NUVCL-126: PDF download only available once the client has signed
   // (signature capture / approval, per NUVCL-105) — Word download removed entirely.
-  const canDownloadPdf = proposal.status === 'signed' || proposal.status === 'fully_signed'
-  const docModel  = buildDocModelFromProposal(proposal)
+  // 2026-10-29: UK proposals can also be downloaded unsigned — they carry the
+  // printed "Signed for and on behalf of" page and are sent for countersigning.
+  const canDownloadPdf = proposal.status === 'signed' || proposal.status === 'fully_signed' || docModel.printedSignBlock
 
   // 2026-10-13: the PDF is generated from the document preview and
   // downloaded directly (lib/exportPdf.ts) — no print dialog. The preview is

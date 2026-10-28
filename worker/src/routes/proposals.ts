@@ -68,6 +68,7 @@ async function attachServiceChildren(env: Env, services: ServiceRow[]) {
       fee_rows: feeRows.map(r => ({
         id: r.id, component: r.component, feeType: r.fee_type,
         setupFee: r.setup_fee ?? '', fee: r.fee ?? '', term: r.term ?? '', note: r.note || '',
+        optional: !!r.is_optional,   // migration 0022
       })),
       footnotes: footnotes.map(f => ({ id: f.id, text: f.text })),
     }
@@ -1451,15 +1452,16 @@ async function insertServiceChildren(env: Env, serviceRowId: string, svc: any): 
     let order = 0
     for (const row of svc.feeRows) {
       await env.DB.prepare(`
-        INSERT INTO proposal_fee_rows (id, proposal_service_id, component, fee_type, setup_fee, fee, term, note, sort_order)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        INSERT INTO proposal_fee_rows (id, proposal_service_id, component, fee_type, setup_fee, fee, term, note, sort_order, is_optional)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).bind(
         // Fee type is free text now; keep a blank one blank (was forced to 'monthly').
         ulid(), serviceRowId, row.component || '', row.feeType ?? 'monthly',
         (row.setupFee === '' || row.setupFee === undefined || row.setupFee === null) ? null : row.setupFee,
         (row.fee === '' || row.fee === undefined || row.fee === null) ? null : row.fee,
         (row.term === '' || row.term === undefined || row.term === null) ? null : row.term,
-        row.note || null, order++
+        row.note || null, order++,
+        row.optional ? 1 : 0,   // migration 0022
       ).run()
     }
   }

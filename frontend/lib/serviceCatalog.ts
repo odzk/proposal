@@ -392,6 +392,8 @@ export function computeFeeTotals(feeRows: FeeRow[] | undefined | null): FeeTotal
   const term = rows.reduce((max, r) => Math.max(max, num(r.term)), 0) || 12
   let monthly = 0, setup = 0, oneOff = 0, recurring = 0, rateRows = 0
   for (const r of rows) {
+    // Optional extras / alternatives are offered, not charged — never in a total.
+    if (r.optional) continue
     setup += num(r.setupFee)
     const fee = num(r.fee)
     switch (feeKind(r.feeType)) {

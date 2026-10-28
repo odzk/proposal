@@ -155,6 +155,17 @@ export interface ProposalDocModel {
   // ticked it on the signing page — rendered as a checklist in the Client
   // Acceptance block (document preview + PDF). Empty until signed.
   clientServiceChoices: ClientServiceChoice[]
+  // 2026-10-29: Governing Entity code (Step 6 / proposal_terms) and whether
+  // the document carries the printed "Signed for and on behalf of" block for
+  // a wet / countersigned PDF — UK entities only (isUkEntity).
+  governingEntityCode: string
+  printedSignBlock:    boolean
+}
+
+/** UK governing entities (e.g. NVH-UK-OPS) contract on a countersigned
+ *  document, so their proposals carry a printed signature block. */
+export function isUkEntity(code: string | null | undefined): boolean {
+  return /(^|-)UK(-|$)/i.test((code || '').trim())
 }
 
 export interface ClientServiceChoice {
@@ -278,6 +289,8 @@ export function buildDocModelFromDraft(
     clientAcceptedServices: [],
     clientDeclinedServices: [],
     clientServiceChoices:   [],
+    governingEntityCode:    draft.terms.governingEntityCode || '',
+    printedSignBlock:       isUkEntity(draft.terms.governingEntityCode),
   }
 }
 
@@ -348,6 +361,8 @@ export function buildDocModelFromProposal(p: any): ProposalDocModel {
           accepted: s.acceptance !== 'declined',
         }))
       : [],
+    governingEntityCode: terms.governingEntityCode || '',
+    printedSignBlock:    isUkEntity(terms.governingEntityCode),
   }
 }
 
@@ -381,7 +396,9 @@ export function documentSourceKey(draft: ProposalDraft): string {
     s: draft.services.map(s => [
       s.code,
       s.scopeItems.map(i => [t(i.sectionHeading), t(i.text), !!i.enabled]),
-      s.feeRows.map(r => [t(r.component), t(r.feeType), n(r.setupFee), n(r.fee), n(r.term)]),
+      // The optional flag is appended only when set, so keys of documents
+      // saved before it existed are unchanged (no forced re-layout).
+      s.feeRows.map(r => [t(r.component), t(r.feeType), n(r.setupFee), n(r.fee), n(r.term), ...(r.optional ? ['opt'] : [])]),
       s.footnotes.map(f => t(f.text)),
     ]),
     c: draft.terms.clauses.map(c => [t(c.heading), t(c.text), !!c.enabled]),
